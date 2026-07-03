@@ -161,6 +161,34 @@ function Read-SharedLines {
         $stream.Dispose()
     }
 }
+
+function Get-SessionIndexMap {
+    $map = @{}
+    $path = Join-Path $Script:CodexHome 'session_index.jsonl'
+    if (-not (Test-Path -LiteralPath $path)) { return $map }
+
+    try {
+        foreach ($line in (Read-SharedLines $path)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try { $item = $line | ConvertFrom-Json } catch { continue }
+            $id = [string](Get-PropValue $item @('id','thread_id','threadId','conversation_id','conversationId'))
+            if (-not $id) { continue }
+            $title = [string](Get-PropValue $item @('thread_name','threadName','title','preview','name'))
+            $updatedAt = Get-PropValue $item @('updated_at','updatedAt')
+            $map[$id] = [ordered]@{ title = $title; updatedAt = $updatedAt }
+        }
+    } catch {}
+
+    return $map
+}
+
+function Get-SessionIdFromFile {
+    param($File)
+    $match = [regex]::Match($File.BaseName, '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$')
+    if ($match.Success) { return $match.Groups[1].Value.ToLowerInvariant() }
+    return $null
+}
+
 function Read-LocalSnapshot {
     $messages = New-Object System.Collections.Generic.List[string]
     $today = New-TokenBucket
@@ -271,14 +299,28 @@ function Read-Automations {
     if (-not (Test-Path $root)) { return $items }
     $files = Get-ChildItem $root -Recurse -Filter 'automation.toml' -File -ErrorAction SilentlyContinue
     foreach ($file in $files) {
-        $text = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+        try {
+            $text = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+        } catch {
+            $text = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+        }
         if (-not $text) { continue }
+        $id = [regex]::Match($text, '(?m)^id\s*=\s*"([^"]*)"').Groups[1].Value
+        $kind = [regex]::Match($text, '(?m)^kind\s*=\s*"([^"]*)"').Groups[1].Value
         $name = [regex]::Match($text, '(?m)^name\s*=\s*"([^"]*)"').Groups[1].Value
         $status = [regex]::Match($text, '(?m)^status\s*=\s*"([^"]*)"').Groups[1].Value
         $rrule = [regex]::Match($text, '(?m)^rrule\s*=\s*"([^"]*)"').Groups[1].Value
+        $updated = [regex]::Match($text, '(?m)^updated_at\s*=\s*"?([^"`r`n"]*)"?').Groups[1].Value
+        if (-not $id) { $id = Split-Path -Leaf (Split-Path -Parent $file.FullName) }
+        if (-not $kind) { $kind = 'cron' }
         if (-not $name) { $name = Split-Path -Leaf (Split-Path -Parent $file.FullName) }
         if (-not $status) { $status = 'UNKNOWN' }
-        $items += [ordered]@{ name = $name; status = $status; rrule = $rrule; updatedAt = $file.LastWriteTime.ToString('s') }
+        if ($updated -match '^\d+$') {
+            try { $updatedAt = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$updated).LocalDateTime } catch { $updatedAt = $file.LastWriteTime }
+        } else {
+            $updatedAt = $file.LastWriteTime
+        }
+        $items += [ordered]@{ id = $id; kind = $kind; name = $name; status = $status; rrule = $rrule; updatedAt = $updatedAt }
     }
     return $items
 }
@@ -296,7 +338,71 @@ function New-ArcGeometry {
     $seg = [Windows.Media.ArcSegment]::new(); $seg.Point = $p2; $seg.Size = [Windows.Size]::new($Radius,$Radius); $seg.IsLargeArc = ($Sweep -gt 180); $seg.SweepDirection = [Windows.Media.SweepDirection]::Clockwise
     $fig.Segments.Add($seg); $geo = [Windows.Media.PathGeometry]::new(); $geo.Figures.Add($fig); $geo
 }
-function Get-RecentTaskItems { $items=@(); $files=@(Get-SessionFiles|Sort-Object LastWriteTime -Descending|Select-Object -First 6); foreach($file in $files){ $hash=[Math]::Abs($file.Name.GetHashCode()).ToString('X'); if($hash.Length -gt 4){$hash=$hash.Substring(0,4)}; $tokens=[int64]0; try{foreach($line in (Read-SharedLines $file.FullName)){if($line -match '"token_count"'){try{$obj=$line|ConvertFrom-Json}catch{continue}; $payload=Get-PropValue $obj @('payload'); $info=Get-PropValue $payload @('info'); $usage=Get-PropValue $info @('last_token_usage','lastTokenUsage'); $tokens += [int64]([double](Get-PropValue $usage @('total_tokens','totalTokens')))}}}catch{}; $items += [ordered]@{code=('COD-'+$hash); title=(Get-UiText '本地 Codex 会话' 'Local Codex Session'); detail=((Get-UiText 'New project 2' 'New project 2')+' · '+(Format-TokenCount $tokens)); updatedAt=$file.LastWriteTime} }; $items }
+
+function Format-AutomationScheduleText {
+    param([string]$RRule)
+    if (-not $RRule) { return Get-UiText 'CRON · 已启用' 'CRON · Enabled' }
+
+    $hour = [regex]::Match($RRule, 'BYHOUR=(\d{1,2})').Groups[1].Value
+    $minute = [regex]::Match($RRule, 'BYMINUTE=(\d{1,2})').Groups[1].Value
+    if ($RRule -match 'FREQ=DAILY' -and $hour -ne '') {
+        if ($minute -eq '') { $minute = '0' }
+        return (Get-UiText 'CRON · 每天 ' 'CRON · Daily ') + ('{0:D2}:{1:D2}' -f [int]$hour, [int]$minute)
+    }
+    return 'CRON · ' + $RRule
+}
+
+function Convert-AutomationTaskItem {
+    param($Item)
+    $id = [string](Get-PropValue $Item @('id','name'))
+    if (-not $id) { $id = 'AI' }
+    $cleanId = ($id -replace '[^0-9A-Za-z]', '').ToUpperInvariant()
+    if ($cleanId.Length -gt 4) { $cleanId = $cleanId.Substring(0,4) }
+    if (-not $cleanId) { $cleanId = 'AI' }
+
+    $detail = Format-AutomationScheduleText ([string](Get-PropValue $Item @('rrule')))
+    $updatedAt = Get-PropValue $Item @('updatedAt','updated_at')
+    $mapped = [ordered]@{ code = ('AUTO-' + $cleanId); title=$Item.name; detail = $detail; updatedAt = $updatedAt }
+    if (-not $mapped.title) { $mapped.title = Get-UiText 'Codex 自动任务' 'Codex Automation' }
+    if (-not $mapped.updatedAt) { $mapped.updatedAt = Get-Date }
+    return $mapped
+}
+
+function Get-RecentTaskItems {
+    $items = @()
+    $index = Get-SessionIndexMap
+    $files = @(Get-SessionFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 6)
+    foreach ($file in $files) {
+        $id = Get-SessionIdFromFile $file
+        $hash = if ($id) { $id.Substring(0, 4).ToUpperInvariant() } else { [Math]::Abs($file.Name.GetHashCode()).ToString('X') }
+        if ($hash.Length -gt 4) { $hash = $hash.Substring(0,4) }
+
+        $tokens = [int64]0
+        try {
+            foreach ($line in (Read-SharedLines $file.FullName)) {
+                if ($line -match '"token_count"') {
+                    try { $obj = $line | ConvertFrom-Json } catch { continue }
+                    $payload = Get-PropValue $obj @('payload')
+                    $info = Get-PropValue $payload @('info')
+                    $usage = Get-PropValue $info @('last_token_usage','lastTokenUsage')
+                    $tokens += [int64]([double](Get-PropValue $usage @('total_tokens','totalTokens')))
+                }
+            }
+        } catch {}
+
+        $title = $null
+        if ($id -and $index.ContainsKey($id)) { $title = [string]$index[$id].title }
+        if (-not $title) { $title = Get-UiText '本地 Codex 会话' 'Local Codex Session' }
+
+        $items += [ordered]@{
+            code = ('COD-' + $hash)
+            title = $title
+            detail = ((Get-UiText 'Codex 会话' 'Codex session') + ' · ' + (Format-TokenCount $tokens))
+            updatedAt = $file.LastWriteTime
+        }
+    }
+    $items
+}
 function Get-RelativeText([datetime]$Date){ $s=(Get-Date)-$Date; if($s.TotalMinutes -lt 60){ $n=([math]::Max(1,[int]$s.TotalMinutes)); return $n.ToString()+(Get-UiText ' 分钟前' ' min ago') } elseif($s.TotalHours -lt 24){ $n=[int]$s.TotalHours; return $n.ToString()+(Get-UiText ' 小时前' ' h ago') } else { $n=[int]$s.TotalDays; return $n.ToString()+(Get-UiText ' 天前' ' d ago') } }
 
 $xaml = @'
@@ -823,8 +929,9 @@ function Add-SplitRow($Panel, [string]$DotColor, [string]$Label, [string]$Value)
 function Get-VisibleTokenTotal($Bucket) { $visible=[int64]$Bucket.input+[int64]$Bucket.output; if($visible -gt 0){return $visible}; return [int64]$Bucket.total }
 function Set-SplitLine($Prefix, $Bucket) { $uncached=[Math]::Max(0,$Bucket.input-$Bucket.cached); $panel=Find ($Prefix+'Split'); $panel.Children.Clear(); Add-SplitRow $panel '#0D8BFF' (Get-UiText '未缓存' 'Uncached') (Format-TokenCount $uncached); Add-SplitRow $panel '#875EFF' (Get-UiText '缓存' 'Cached') (Format-TokenCount $Bucket.cached); Add-SplitRow $panel '#FF9F0A' (Get-UiText '输出' 'Output') (Format-TokenCount $Bucket.output); $total=[Math]::Max(1,$uncached+$Bucket.cached+$Bucket.output); $max=210.0; $inW=[Math]::Max(12,$max*$uncached/$total); $caW=[Math]::Max(18,$max*$Bucket.cached/$total); $outW=[Math]::Max(4,$max*$Bucket.output/$total); (Find ($Prefix+'BarInput')).Width=$inW; (Find ($Prefix+'BarCached')).Margin=[Windows.Thickness]::new($inW,0,0,0); (Find ($Prefix+'BarCached')).Width=$caW; (Find ($Prefix+'BarOut')).Width=$outW }
 function Add-TaskCard($Panel,$Item,[string]$Accent,[string]$Chip,[string]$ChipBg){ $border=[Windows.Controls.Border]::new(); $border.Margin=[Windows.Thickness]::new(0,0,0,12); $border.Padding=[Windows.Thickness]::new(12); $border.CornerRadius=[Windows.CornerRadius]::new(10); $border.Background=New-Brush '#DDEBF0F4'; $border.BorderBrush=New-Brush '#70FFFFFF'; $border.BorderThickness=[Windows.Thickness]::new(1); $stack=[Windows.Controls.StackPanel]::new(); $border.Child=$stack; $top=[Windows.Controls.DockPanel]::new(); $code=[Windows.Controls.TextBlock]::new(); $code.Text=$Item.code; $code.FontWeight='Bold'; $code.FontSize=13; $code.Foreground=New-Brush '#65727B'; $time=[Windows.Controls.TextBlock]::new(); $time.Text=Get-RelativeText $Item.updatedAt; $time.FontSize=12; $time.Foreground=New-Brush '#89949A'; $time.HorizontalAlignment='Right'; [Windows.Controls.DockPanel]::SetDock($time,'Right'); $top.Children.Add($time)|Out-Null; $top.Children.Add($code)|Out-Null; $stack.Children.Add($top)|Out-Null; $title=[Windows.Controls.TextBlock]::new(); $title.Text=$Item.title; $title.FontWeight='Black'; $title.FontSize=14; $title.Foreground=New-Brush '#111820'; $title.Margin=[Windows.Thickness]::new(0,8,0,4); $stack.Children.Add($title)|Out-Null; $detail=[Windows.Controls.TextBlock]::new(); $detail.Text=$Item.detail; $detail.FontWeight='SemiBold'; $detail.FontSize=12.5; $detail.Foreground=New-Brush '#626B72'; $detail.Margin=[Windows.Thickness]::new(0,0,0,10); $stack.Children.Add($detail)|Out-Null; $chipBorder=[Windows.Controls.Border]::new(); $chipBorder.Background=New-Brush $ChipBg; $chipBorder.CornerRadius=[Windows.CornerRadius]::new(14); $chipBorder.Padding=[Windows.Thickness]::new(10,4,10,4); $chipBorder.HorizontalAlignment='Left'; $txt=[Windows.Controls.TextBlock]::new(); $txt.Text=$Chip; $txt.FontWeight='Black'; $txt.FontSize=12; $txt.Foreground=New-Brush $Accent; $chipBorder.Child=$txt; $stack.Children.Add($chipBorder)|Out-Null; $Panel.Children.Add($border)|Out-Null }
-function Update-Ui { $s=Read-LocalSnapshot; $p=if($s.primary){[double]$s.primary.remainingPercent}else{0}; $q=if($s.secondary){[double]$s.secondary.remainingPercent}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@(Get-RecentTaskItems); for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled $autos[0] '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=(Get-UiText '刷新 ' 'Refresh ')+(Get-Date).ToString('HH:mm')+'   ⌘W'; Set-AutoRefreshVisual }
+function Update-Ui { $s=Read-LocalSnapshot; $p=if($s.primary){[double]$s.primary.remainingPercent}else{0}; $q=if($s.secondary){[double]$s.secondary.remainingPercent}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@(Get-RecentTaskItems); for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=(Get-UiText '刷新 ' 'Refresh ')+(Get-Date).ToString('HH:mm')+'   ⌘W'; Set-AutoRefreshVisual }
 if ($DumpJson) { Read-LocalSnapshot | ConvertTo-Json -Depth 12; exit 0 }
 Load-Window
 Update-Ui
 [void]$Script:Window.Show(); Send-WindowToBottom; $Script:App = [Windows.Application]::new(); $Script:App.Add_DispatcherUnhandledException({ param($sender,$e) $e.Handled = $true; try { [System.Windows.Forms.MessageBox]::Show(('CodexW 发生错误：' + $e.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null } catch {} }); [void]$Script:App.Run($Script:Window)
+
