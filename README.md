@@ -9,12 +9,22 @@ CodexW is a Windows-native desktop usage panel for Codex, adapted from
 
 It keeps the visual style of codexU while running on stock Windows with
 PowerShell and WPF. No Python, Node.js, sqlite3, Xcode, or .NET SDK is required.
+It includes both the full dashboard and a Mini mode focused on the quota ring.
 
-![CodexW screenshot](docs/screenshot.png)
+## UI Preview
+
+### Full Mode
+
+![CodexW full mode](docs/screenshot-en-full.png)
+
+### Mini Mode
+
+![CodexW mini mode](docs/screenshot-en-mini.png)
 
 ## Features
 
 - Desktop panel with Codex usage statistics.
+- Full dashboard mode and compact Mini mode.
 - 5-hour and 7-day quota rings.
 - Today, 7-day, and lifetime token/cost cards.
 - Value progress bar for Plus, Pro100, and Pro200 thresholds.
@@ -35,7 +45,7 @@ PowerShell and WPF. No Python, Node.js, sqlite3, Xcode, or .NET SDK is required.
 ## Quick Start
 
 1. Download or clone this repository.
-2. Double-click `Start-CodexW.cmd`.
+2. Double-click `CodexWLauncher.exe`. Use `Start-CodexW.cmd` only as a fallback.
 3. Use the tray icon to show, hide, refresh, or quit CodexW.
 
 The app reads local Codex JSONL session logs directly. It does not require a
@@ -44,12 +54,12 @@ background server and does not upload your local usage data.
 ## Files
 
 ```text
-CodexWLauncher.exe         Native Windows launcher.
+CodexWLauncher.exe           Native Windows launcher, included in release packages.
 Start-CodexW.cmd             Fallback root launcher.
 windows/Start-CodexW.cmd     Hidden-window launcher.
 windows/CodexW.ps1           Main WPF app.
 Resources/CodexW-icon.png    Tray and header icon.
-docs/screenshot.png          Project screenshot.
+docs/screenshot-*.png        README screenshots.
 ```
 
 ## Settings
@@ -85,6 +95,8 @@ preserved in `LICENSE`, and source attribution is listed in `NOTICE.md`.
 ## License
 
 MIT.
+
+
 
 
 
