@@ -1,4 +1,4 @@
-# Local runtime output
+﻿# Local runtime output
 *.log
 *.tmp
 *.bak
@@ -15,3 +15,6 @@ dist/*.zip
 
 # PowerShell generated local settings are stored under %LOCALAPPDATA%\CodexW,
 # not in this repository.
+/CodexWLauncher.exe
+/dist/
+
