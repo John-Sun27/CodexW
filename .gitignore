@@ -1,0 +1,17 @@
+# Local runtime output
+*.log
+*.tmp
+*.bak
+
+# Windows and editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Release artifacts are built locally and uploaded to GitHub Releases.
+dist/*.zip
+
+# PowerShell generated local settings are stored under %LOCALAPPDATA%\CodexW,
+# not in this repository.
