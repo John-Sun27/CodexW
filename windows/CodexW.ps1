@@ -448,6 +448,11 @@ function Get-LegacyStartupCommand {
     return ('"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "{1}"' -f $powershell, $Script:SelfPath)
 }
 function Get-StartupLauncherPath { Join-Path $Script:SettingsDir 'Start-CodexW-hidden.vbs' }
+function Get-ExeStartupCommand {
+    $launcher = Join-Path $Script:RepoRoot 'CodexWLauncher.exe'
+    if (Test-Path -LiteralPath $launcher) { return ('"{0}"' -f $launcher) }
+    return $null
+}
 function Update-StartupLauncher {
     if (-not (Test-Path $Script:SettingsDir)) { New-Item -ItemType Directory -Path $Script:SettingsDir -Force | Out-Null }
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -470,6 +475,8 @@ function Update-StartupLauncher {
     return $launcher
 }
 function Get-StartupCommand {
+    $exeCommand = Get-ExeStartupCommand
+    if ($exeCommand) { return $exeCommand }
     $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
     if (-not (Test-Path $wscript)) { $wscript = 'wscript.exe' }
     return ('"{0}" "{1}"' -f $wscript, (Update-StartupLauncher))

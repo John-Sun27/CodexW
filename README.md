@@ -1,4 +1,4 @@
-# CodexW
+﻿# CodexW
 
 <p align="center">
   <strong>English</strong> / <a href="README.zh-CN.md">简体中文</a>
@@ -44,7 +44,8 @@ background server and does not upload your local usage data.
 ## Files
 
 ```text
-Start-CodexW.cmd             Root launcher.
+CodexWLauncher.exe         Native Windows launcher.
+Start-CodexW.cmd             Fallback root launcher.
 windows/Start-CodexW.cmd     Hidden-window launcher.
 windows/CodexW.ps1           Main WPF app.
 Resources/CodexW-icon.png    Tray and header icon.
@@ -84,3 +85,4 @@ preserved in `LICENSE`, and source attribution is listed in `NOTICE.md`.
 ## License
 
 MIT.
+
