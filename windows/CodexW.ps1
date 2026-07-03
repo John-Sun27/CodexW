@@ -458,10 +458,15 @@ function Update-StartupLauncher {
     $scriptPath = ($Script:SelfPath -replace '"', '""')
     $lines = @(
         'Set sh = CreateObject("WScript.Shell")',
-        ('sh.CurrentDirectory = "{0}"' -f $workDir),
-        ('sh.Run """{0}"" -NoProfile -ExecutionPolicy Bypass -STA -File ""{1}""", 0, False' -f $psPath, $scriptPath)
+        'Set fso = CreateObject("Scripting.FileSystemObject")',
+        ('psPath = "{0}"' -f $psPath),
+        ('scriptPath = "{0}"' -f $scriptPath),
+        ('workDir = "{0}"' -f $workDir),
+        'If Not fso.FileExists(scriptPath) Then WScript.Quit 0',
+        'If fso.FolderExists(workDir) Then sh.CurrentDirectory = workDir',
+        'sh.Run """" & psPath & """ -NoProfile -ExecutionPolicy Bypass -STA -File """ & scriptPath & """", 0, False'
     )
-    Set-Content -LiteralPath $launcher -Value $lines -Encoding ASCII
+    Set-Content -LiteralPath $launcher -Value $lines -Encoding Unicode
     return $launcher
 }
 function Get-StartupCommand {
