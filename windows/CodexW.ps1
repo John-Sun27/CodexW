@@ -435,24 +435,58 @@ function Set-AutoRefreshEnabled([bool]$Enabled) {
     Set-AutoRefreshVisual
 }
 function Toggle-AutoRefresh { Set-AutoRefreshEnabled (-not $Script:AutoRefreshEnabled) }
-function Get-StartupCommand {
+function Get-LegacyStartupCommand {
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (-not (Test-Path $powershell)) { $powershell = 'powershell.exe' }
     return ('"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "{1}"' -f $powershell, $Script:SelfPath)
 }
+function Get-StartupLauncherPath { Join-Path $Script:SettingsDir 'Start-CodexW-hidden.vbs' }
+function Update-StartupLauncher {
+    if (-not (Test-Path $Script:SettingsDir)) { New-Item -ItemType Directory -Path $Script:SettingsDir -Force | Out-Null }
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path $powershell)) { $powershell = 'powershell.exe' }
+    $launcher = Get-StartupLauncherPath
+    $workDir = ($Script:AppRoot -replace '"', '""')
+    $psPath = ($powershell -replace '"', '""')
+    $scriptPath = ($Script:SelfPath -replace '"', '""')
+    $lines = @(
+        'Set sh = CreateObject("WScript.Shell")',
+        ('sh.CurrentDirectory = "{0}"' -f $workDir),
+        ('sh.Run """{0}"" -NoProfile -ExecutionPolicy Bypass -STA -File ""{1}""", 0, False' -f $psPath, $scriptPath)
+    )
+    Set-Content -LiteralPath $launcher -Value $lines -Encoding ASCII
+    return $launcher
+}
+function Get-StartupCommand {
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    if (-not (Test-Path $wscript)) { $wscript = 'wscript.exe' }
+    return ('"{0}" "{1}"' -f $wscript, (Update-StartupLauncher))
+}
 function Get-StartupEnabled {
     try {
         $props = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $Script:StartupRunName -ErrorAction Stop
-        return ([string]$props.($Script:StartupRunName) -eq (Get-StartupCommand))
+        $current = [string]$props.($Script:StartupRunName)
+        return ($current -eq (Get-StartupCommand) -or $current -eq (Get-LegacyStartupCommand) -or $current -like '*CodexW.ps1*')
     } catch { return $false }
 }
 function Set-StartupEnabled([bool]$Enabled) {
     $runPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     if ($Enabled) {
-        Set-ItemProperty -Path $runPath -Name $Script:StartupRunName -Value (Get-StartupCommand) | Out-Null
+        New-ItemProperty -Path $runPath -Name $Script:StartupRunName -Value (Get-StartupCommand) -PropertyType String -Force | Out-Null
     } else {
         Remove-ItemProperty -Path $runPath -Name $Script:StartupRunName -ErrorAction SilentlyContinue
     }
+}
+function Repair-StartupCommand {
+    $runPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    try {
+        $props = Get-ItemProperty -Path $runPath -Name $Script:StartupRunName -ErrorAction Stop
+        $current = [string]$props.($Script:StartupRunName)
+        $target = Get-StartupCommand
+        if ($current -ne $target -and ($current -eq (Get-LegacyStartupCommand) -or $current -like '*CodexW.ps1*')) {
+            New-ItemProperty -Path $runPath -Name $Script:StartupRunName -Value $target -PropertyType String -Force | Out-Null
+        }
+    } catch {}
 }
 function Get-AppSettingsMap {
     $map = [ordered]@{}
@@ -711,6 +745,7 @@ function Load-Window {
     $Script:Window = [Windows.Markup.XamlReader]::Load($reader)
     if (Test-Path $Script:IconPng) { (Find 'LogoImage').Source = [Windows.Media.Imaging.BitmapImage]::new([Uri]$Script:IconPng) }
     Restore-WindowPlacement
+    Repair-StartupCommand
     Initialize-TrayIcon
     $Script:Window.Add_SourceInitialized({ Send-WindowToBottom })
     $Script:Window.Add_ContentRendered({ Update-Ui; Send-WindowToBottom })
