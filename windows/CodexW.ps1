@@ -45,6 +45,9 @@ $Script:StartupRunName = 'CodexW'
 $Script:AutoRefreshEnabled = $true
 $Script:AutoRefreshTimer = $null
 $Script:AutoRefreshMinutes = 5
+$Script:CompactMode = $false
+$Script:NormalWindowPlacement = $null
+$Script:CompactWindowPlacement = $null
 $Script:RingTextLayout = @{
     PrimaryLabel = @{ Left = 74; Top = 80; FontSize = 13 }
     PrimaryValue = @{ Left = 100; Top = 73; FontSize = 19 }
@@ -407,14 +410,14 @@ function Get-RelativeText([datetime]$Date){ $s=(Get-Date)-$Date; if($s.TotalMinu
 
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="1120" Height="900" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen" Topmost="False" ShowInTaskbar="False" FontFamily="Segoe UI, Microsoft YaHei UI">
-<Grid><Border x:Name="RootShell" Margin="20" CornerRadius="36" Background="#C38AAEBC" BorderBrush="#55FFFFFF" BorderThickness="1.2"><Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.35" Color="#1E3744"/></Border.Effect><Grid Margin="16"><Grid.RowDefinitions><RowDefinition Height="66"/><RowDefinition Height="346"/><RowDefinition Height="*"/><RowDefinition Height="28"/></Grid.RowDefinitions>
-<Grid Grid.Row="0"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Border Width="42" Height="42" CornerRadius="10" Background="#F7FFFFFF"><Image x:Name="LogoImage" Margin="5" Stretch="Uniform"/></Border><TextBlock x:Name="BrandText" Text="CodexW" FontSize="32" FontWeight="Black" Foreground="#02080D" Margin="16,0,0,2" VerticalAlignment="Center"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"><Border x:Name="ThemeSwitch" Cursor="Hand" CornerRadius="7" Background="#50485561" Padding="3" Margin="0,0,46,0"><StackPanel Orientation="Horizontal"><Border x:Name="ThemeAutoSegment" Width="24" Height="24" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="ThemeAutoText" Text="◐" FontSize="13" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeLightSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeLightText" Text="☀" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeDarkSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeDarkText" Text="◑" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Border x:Name="LanguageSwitch" Cursor="Hand" CornerRadius="6" Background="#505194AD" Padding="3" Margin="0,0,20,0"><StackPanel Orientation="Horizontal"><Border x:Name="LangZhSegment" Width="38" Height="26" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="LangZhText" Text="中" FontSize="14" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="LangEnSegment" Width="38" Height="26" CornerRadius="5" Background="#00000000"><TextBlock x:Name="LangEnText" Text="EN" FontSize="14" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Border CornerRadius="20" Background="#D8EAF2F4" Padding="13,8" Margin="0,0,14,0"><TextBlock x:Name="PlanText" Text="PLUS" FontSize="18" FontWeight="Black" Foreground="#51616C"/></Border><Button x:Name="RefreshButton" Content="↻" Width="70" Height="48" FontSize="24" FontWeight="Bold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0" Margin="0,0,12,0"/><Button x:Name="CloseButton" Content="×" Width="70" Height="48" FontSize="28" FontWeight="SemiBold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0"/></StackPanel></Grid>
-<Border Grid.Row="1" CornerRadius="24" Background="#58D2E9F1" Padding="22" BorderBrush="#35FFFFFF" BorderThickness="1"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid Grid.Column="0"><Canvas Width="220" Height="220" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0"><Ellipse Width="190" Height="190" Canvas.Left="15" Canvas.Top="15" Stroke="#3A73909A" StrokeThickness="28"/><Ellipse Width="134" Height="134" Canvas.Left="43" Canvas.Top="43" Stroke="#4273909A" StrokeThickness="22"/><Path x:Name="PrimaryArc" Stroke="#2E6BFF" StrokeThickness="28" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><Path x:Name="SecondaryArc" Stroke="#9B6EFF" StrokeThickness="22" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><TextBlock x:Name="PrimaryRingLabel" Text="5h" Canvas.Left="72" Canvas.Top="90" FontSize="15" FontWeight="Black" Foreground="#1487FF"/><TextBlock x:Name="PrimaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="82" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="SecondaryRingLabel" Text="7d" Canvas.Left="72" Canvas.Top="124" FontSize="15" FontWeight="Black" Foreground="#8964FF"/><TextBlock x:Name="SecondaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="116" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="RemainingLabel" Text="剩余" Canvas.Left="101" Canvas.Top="153" FontSize="15" FontWeight="Bold" Foreground="#1E333E"/></Canvas><Grid Margin="16,254,18,0" VerticalAlignment="Top"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="82"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="PrimaryResetLabel" Text="●  5h  重置" Foreground="#2665FF" FontSize="14" FontWeight="Bold"/><TextBlock x:Name="SecondaryResetLabel" Text="●  7d  重置" Foreground="#8D63FF" FontSize="14" FontWeight="Bold" Margin="0,12,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock x:Name="PrimaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right"/><TextBlock x:Name="SecondaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right" Margin="0,12,0,0"/></StackPanel></Grid></Grid><Grid Grid.Column="1" Margin="20,0,0,0"><Grid.RowDefinitions><RowDefinition Height="178"/><RowDefinition Height="124"/></Grid.RowDefinitions><Grid Grid.Row="0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+<Grid><Border x:Name="RootShell" Margin="20" CornerRadius="36" Background="#C38AAEBC" BorderBrush="#55FFFFFF" BorderThickness="1.2"><Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.35" Color="#1E3744"/></Border.Effect><Grid x:Name="MainGrid" Margin="16"><Grid.RowDefinitions><RowDefinition x:Name="HeaderRow" Height="66"/><RowDefinition x:Name="StatsRow" Height="346"/><RowDefinition x:Name="BoardRow" Height="*"/><RowDefinition x:Name="FooterRow" Height="28"/></Grid.RowDefinitions>
+<Grid x:Name="HeaderPanel" Grid.Row="0"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Border Width="42" Height="42" CornerRadius="10" Background="#F7FFFFFF"><Image x:Name="LogoImage" Margin="5" Stretch="Uniform"/></Border><TextBlock x:Name="BrandText" Text="CodexW" FontSize="32" FontWeight="Black" Foreground="#02080D" Margin="16,0,0,2" VerticalAlignment="Center"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"><Border x:Name="ThemeSwitch" Cursor="Hand" CornerRadius="7" Background="#50485561" Padding="3" Margin="0,0,46,0"><StackPanel Orientation="Horizontal"><Border x:Name="ThemeAutoSegment" Width="24" Height="24" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="ThemeAutoText" Text="◐" FontSize="13" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeLightSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeLightText" Text="☀" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeDarkSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeDarkText" Text="◑" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Border x:Name="LanguageSwitch" Cursor="Hand" CornerRadius="6" Background="#505194AD" Padding="3" Margin="0,0,20,0"><StackPanel Orientation="Horizontal"><Border x:Name="LangZhSegment" Width="38" Height="26" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="LangZhText" Text="中" FontSize="14" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="LangEnSegment" Width="38" Height="26" CornerRadius="5" Background="#00000000"><TextBlock x:Name="LangEnText" Text="EN" FontSize="14" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Button x:Name="CompactButton" Width="58" Height="48" Background="#66D5E5EB" Foreground="#102A38" BorderThickness="0" Margin="0,0,12,0"><TextBlock x:Name="CompactButtonText" Text="简" FontSize="16" FontWeight="Black" TextAlignment="Center" VerticalAlignment="Center"/></Button><Border CornerRadius="20" Background="#D8EAF2F4" Padding="13,8" Margin="0,0,14,0"><TextBlock x:Name="PlanText" Text="PLUS" FontSize="18" FontWeight="Black" Foreground="#51616C"/></Border><Button x:Name="RefreshButton" Content="↻" Width="70" Height="48" FontSize="24" FontWeight="Bold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0" Margin="0,0,12,0"/><Button x:Name="CloseButton" Content="×" Width="70" Height="48" FontSize="28" FontWeight="SemiBold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0"/></StackPanel></Grid>
+<Border x:Name="TopStatsPanel" Grid.Row="1" CornerRadius="24" Background="#58D2E9F1" Padding="22" BorderBrush="#35FFFFFF" BorderThickness="1"><Grid x:Name="TopStatsGrid"><Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid x:Name="CompactContentPanel" Grid.Column="0"><Canvas x:Name="RingCanvas" Width="220" Height="220" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0"><Ellipse Width="190" Height="190" Canvas.Left="15" Canvas.Top="15" Stroke="#3A73909A" StrokeThickness="28"/><Ellipse Width="134" Height="134" Canvas.Left="43" Canvas.Top="43" Stroke="#4273909A" StrokeThickness="22"/><Path x:Name="PrimaryArc" Stroke="#2E6BFF" StrokeThickness="28" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><Path x:Name="SecondaryArc" Stroke="#9B6EFF" StrokeThickness="22" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><TextBlock x:Name="PrimaryRingLabel" Text="5h" Canvas.Left="72" Canvas.Top="90" FontSize="15" FontWeight="Black" Foreground="#1487FF"/><TextBlock x:Name="PrimaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="82" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="SecondaryRingLabel" Text="7d" Canvas.Left="72" Canvas.Top="124" FontSize="15" FontWeight="Black" Foreground="#8964FF"/><TextBlock x:Name="SecondaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="116" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="RemainingLabel" Text="剩余" Canvas.Left="101" Canvas.Top="153" FontSize="15" FontWeight="Bold" Foreground="#1E333E"/></Canvas><Grid x:Name="ResetTimesGrid" Margin="16,254,18,0" VerticalAlignment="Top"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="82"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="PrimaryResetLabel" Text="●  5h  重置" Foreground="#2665FF" FontSize="14" FontWeight="Bold"/><TextBlock x:Name="SecondaryResetLabel" Text="●  7d  重置" Foreground="#8D63FF" FontSize="14" FontWeight="Bold" Margin="0,12,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock x:Name="PrimaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right"/><TextBlock x:Name="SecondaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right" Margin="0,12,0,0"/></StackPanel></Grid><Button x:Name="CompactFloatingButton" Content="全" Width="36" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" Background="#DCEBF3F7" Foreground="#102A38" FontSize="13" FontWeight="Black" BorderThickness="0" Visibility="Collapsed"/></Grid><Grid x:Name="StatsRightPanel" Grid.Column="1" Margin="20,0,0,0"><Grid.RowDefinitions><RowDefinition Height="178"/><RowDefinition Height="124"/></Grid.RowDefinitions><Grid Grid.Row="0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
 <Border Grid.Column="0" Margin="0,0,16,0" CornerRadius="12" Background="#DCEBF3F7" Padding="14"><Grid><TextBlock x:Name="TodayTitle" Text="☀  今日" FontSize="17" FontWeight="Bold" Foreground="#58666F"/><TextBlock x:Name="TodayCost" Text="$--" FontSize="16" FontWeight="Black" Foreground="#4A5962" HorizontalAlignment="Right"/><TextBlock x:Name="TodayTokens" Text="--" FontSize="32" FontWeight="Black" Foreground="#03090E" Margin="0,32,0,0"/><Border Margin="0,70,0,0" Height="12" CornerRadius="6" Background="#C5CDD6D9" VerticalAlignment="Top"><Grid><Border x:Name="TodayBarInput" Background="#0D8BFF" CornerRadius="6" HorizontalAlignment="Left" Width="28"/><Border x:Name="TodayBarCached" Background="#875EFF" CornerRadius="0" HorizontalAlignment="Left" Margin="28,0,0,0" Width="188"/><Border x:Name="TodayBarOut" Background="#FF9F0A" CornerRadius="0,6,6,0" HorizontalAlignment="Right" Width="6"/></Grid></Border><StackPanel x:Name="TodaySplit" Margin="0,84,0,0"/></Grid></Border>
 <Border Grid.Column="1" Margin="0,0,16,0" CornerRadius="12" Background="#DCEBF3F7" Padding="14"><Grid><TextBlock x:Name="SevenTitle" Text="▦  近 7 天" FontSize="17" FontWeight="Bold" Foreground="#58666F"/><TextBlock x:Name="SevenCost" Text="$--" FontSize="16" FontWeight="Black" Foreground="#4A5962" HorizontalAlignment="Right"/><TextBlock x:Name="SevenTokens" Text="--" FontSize="32" FontWeight="Black" Foreground="#03090E" Margin="0,32,0,0"/><Border Margin="0,70,0,0" Height="12" CornerRadius="6" Background="#C5CDD6D9" VerticalAlignment="Top"><Grid><Border x:Name="SevenBarInput" Background="#0D8BFF" CornerRadius="6" HorizontalAlignment="Left" Width="28"/><Border x:Name="SevenBarCached" Background="#875EFF" CornerRadius="0" HorizontalAlignment="Left" Margin="28,0,0,0" Width="188"/><Border x:Name="SevenBarOut" Background="#FF9F0A" CornerRadius="0,6,6,0" HorizontalAlignment="Right" Width="6"/></Grid></Border><StackPanel x:Name="SevenSplit" Margin="0,84,0,0"/></Grid></Border>
 <Border Grid.Column="2" CornerRadius="12" Background="#DCEBF3F7" Padding="14"><Grid><TextBlock x:Name="LifeTitle" Text="Σ  累计" FontSize="17" FontWeight="Bold" Foreground="#58666F"/><TextBlock x:Name="LifeCost" Text="$--" FontSize="16" FontWeight="Black" Foreground="#4A5962" HorizontalAlignment="Right"/><TextBlock x:Name="LifeTokens" Text="--" FontSize="32" FontWeight="Black" Foreground="#03090E" Margin="0,32,0,0"/><Border Margin="0,70,0,0" Height="12" CornerRadius="6" Background="#C5CDD6D9" VerticalAlignment="Top"><Grid><Border x:Name="LifeBarInput" Background="#0D8BFF" CornerRadius="6" HorizontalAlignment="Left" Width="28"/><Border x:Name="LifeBarCached" Background="#875EFF" CornerRadius="0" HorizontalAlignment="Left" Margin="28,0,0,0" Width="188"/><Border x:Name="LifeBarOut" Background="#FF9F0A" CornerRadius="0,6,6,0" HorizontalAlignment="Right" Width="6"/></Grid></Border><StackPanel x:Name="LifeSplit" Margin="0,84,0,0"/></Grid></Border>
 </Grid><Border Grid.Row="1" CornerRadius="12" Background="#DCEBF3F7" Padding="14" Margin="0,12,0,0"><Grid><Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="36"/><RowDefinition Height="24"/></Grid.RowDefinitions><Grid Grid.Row="0"><TextBlock x:Name="ValueTitle" Text="⌁  羊毛进度" FontSize="18" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="ValueText" Text="$--" FontSize="24" FontWeight="Black" Foreground="#03090E" HorizontalAlignment="Right"/></Grid><Border x:Name="ValueTrack" Grid.Row="1" Height="16" CornerRadius="8" Background="#B8C8D1D6" VerticalAlignment="Center"><Grid ClipToBounds="False"><Border x:Name="ValueBar" Width="45" Height="16" HorizontalAlignment="Left" Background="#168DFF" CornerRadius="8"/><Ellipse x:Name="ValueMarkerPlus" Width="8" Height="8" Fill="#168DFF" Stroke="#DCEBF3F7" StrokeThickness="1.5" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="68,0,0,0"/><Ellipse x:Name="ValueMarkerPro100" Width="8" Height="8" Fill="#875EFF" Stroke="#DCEBF3F7" StrokeThickness="1.5" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="356,0,0,0"/><Ellipse x:Name="ValueMarkerPro200" Width="8" Height="8" Fill="#6F95FF" Stroke="#DCEBF3F7" StrokeThickness="1.5" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="716,0,0,0"/></Grid></Border><StackPanel x:Name="ValueLegendRow" Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Margin="0,0,18,0"><Ellipse Width="6" Height="6" Fill="#168DFF" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Plus" Foreground="#53616A" FontWeight="Black" FontSize="12.5"/><TextBlock Text=" $20" Foreground="#6B7881" FontWeight="Bold" FontSize="12.5"/></StackPanel><StackPanel Orientation="Horizontal" Margin="0,0,18,0"><Ellipse Width="6" Height="6" Fill="#875EFF" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Pro100" Foreground="#53616A" FontWeight="Black" FontSize="12.5"/><TextBlock Text=" $100" Foreground="#6B7881" FontWeight="Bold" FontSize="12.5"/></StackPanel><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="#6F95FF" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock Text="Pro200" Foreground="#53616A" FontWeight="Black" FontSize="12.5"/><TextBlock Text=" $200" Foreground="#6B7881" FontWeight="Bold" FontSize="12.5"/></StackPanel></StackPanel><TextBlock x:Name="FullQuotaText" Grid.Row="2" Text="下一档 Plus $20" Foreground="#53616A" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid></Border></Grid></Grid></Border>
-<Border Grid.Row="2" Margin="0,16,0,0" CornerRadius="24" Background="#50D2E9F1" Padding="16" BorderBrush="#35FFFFFF" BorderThickness="1"><Grid><Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions><Grid><TextBlock x:Name="BoardTitle" Text="今日任务看板" FontSize="20" FontWeight="Black" Foreground="#061018" VerticalAlignment="Center"/><TextBlock x:Name="BoardMeta" Text="-- 事项 · --" FontSize="15" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid><Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Border Grid.Column="0" Margin="0,0,12,0" CornerRadius="14" Background="#2FFFBD42" BorderBrush="#4CFFBD42" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="ActiveHeader" DockPanel.Dock="Top" Text="⦿  进行中  3                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="ActiveList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="1" Margin="0,0,12,0" CornerRadius="14" Background="#22C7D2D8" BorderBrush="#35C7D2D8" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="PendingHeader" DockPanel.Dock="Top" Text="○  待处理  2                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="PendingList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="2" Margin="0,0,12,0" CornerRadius="14" Background="#258B6DFF" BorderBrush="#458B6DFF" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="ScheduledHeader" DockPanel.Dock="Top" Text="◴  定时  1                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="ScheduledList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="3" CornerRadius="14" Background="#2634C759" BorderBrush="#4434C759" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="DoneHeader" DockPanel.Dock="Top" Text="●  完成  0                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><Grid><TextBlock x:Name="EmptyDoneText" Text="◌&#x0a;暂无" FontSize="16" FontWeight="Bold" Foreground="#55708089" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid></DockPanel></Border></Grid></Grid></Border><StackPanel x:Name="FooterCluster" Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,34,-4"><Border x:Name="AutoRefreshToggle" Cursor="Hand" CornerRadius="9" Background="#168DFF" Padding="8,2" Margin="0,0,12,0"><TextBlock x:Name="AutoRefreshText" Text="自动 5m" Foreground="#FFFFFF" FontSize="13" FontWeight="Black"/></Border><TextBlock x:Name="FooterText" Text="刷新 --   ⌘W" Foreground="#102A38" FontSize="15" FontWeight="Black"/></StackPanel></Grid></Border></Grid>
+<Border x:Name="TaskBoardPanel" Grid.Row="2" Margin="0,16,0,0" CornerRadius="24" Background="#50D2E9F1" Padding="16" BorderBrush="#35FFFFFF" BorderThickness="1"><Grid><Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions><Grid><TextBlock x:Name="BoardTitle" Text="今日任务看板" FontSize="20" FontWeight="Black" Foreground="#061018" VerticalAlignment="Center"/><TextBlock x:Name="BoardMeta" Text="-- 事项 · --" FontSize="15" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid><Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Border Grid.Column="0" Margin="0,0,12,0" CornerRadius="14" Background="#2FFFBD42" BorderBrush="#4CFFBD42" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="ActiveHeader" DockPanel.Dock="Top" Text="⦿  进行中  3                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="ActiveList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="1" Margin="0,0,12,0" CornerRadius="14" Background="#22C7D2D8" BorderBrush="#35C7D2D8" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="PendingHeader" DockPanel.Dock="Top" Text="○  待处理  2                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="PendingList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="2" Margin="0,0,12,0" CornerRadius="14" Background="#258B6DFF" BorderBrush="#458B6DFF" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="ScheduledHeader" DockPanel.Dock="Top" Text="◴  定时  1                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><ScrollViewer VerticalScrollBarVisibility="Hidden"><StackPanel x:Name="ScheduledList"/></ScrollViewer></DockPanel></Border><Border Grid.Column="3" CornerRadius="14" Background="#2634C759" BorderBrush="#4434C759" BorderThickness="1" Padding="12"><DockPanel><TextBlock x:Name="DoneHeader" DockPanel.Dock="Top" Text="●  完成  0                         ⋯" FontSize="16" FontWeight="Black" Foreground="#061018" Margin="0,0,0,12"/><Grid><TextBlock x:Name="EmptyDoneText" Text="◌&#x0a;暂无" FontSize="16" FontWeight="Bold" Foreground="#55708089" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid></DockPanel></Border></Grid></Grid></Border><StackPanel x:Name="FooterCluster" Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,34,-4"><Border x:Name="AutoRefreshToggle" Cursor="Hand" CornerRadius="9" Background="#168DFF" Padding="8,2" Margin="0,0,12,0"><TextBlock x:Name="AutoRefreshText" Text="自动 5m" Foreground="#FFFFFF" FontSize="13" FontWeight="Black"/></Border><TextBlock x:Name="FooterText" Text="刷新 --   ⌘W" Foreground="#102A38" FontSize="15" FontWeight="Black"/></StackPanel></Grid></Border></Grid>
 </Window>
 '@
 
@@ -511,6 +514,7 @@ function Apply-Language {
     Set-Text 'BoardMeta' ('--' + (Get-UiText ' 事项 · ' ' items · ') + '--')
     Set-Text 'FooterText' ((Get-UiText '刷新 ' 'Refresh ') + '--   ⌘W')
     Set-AutoRefreshVisual
+    Set-CompactButtonVisual
     Apply-Theme
 }
 function Set-Language([string]$Language) {
@@ -548,6 +552,153 @@ function Set-AutoRefreshEnabled([bool]$Enabled) {
     Set-AutoRefreshVisual
 }
 function Toggle-AutoRefresh { Set-AutoRefreshEnabled (-not $Script:AutoRefreshEnabled) }
+function Load-AppPreferences {
+    $settings = Get-AppSettingsMap
+    try {
+        if ($settings.Contains('compactMode')) { $Script:CompactMode = [bool]$settings['compactMode'] }
+        if ($settings.Contains('window')) { $Script:NormalWindowPlacement = $settings['window'] }
+        if ($settings.Contains('compactWindow')) { $Script:CompactWindowPlacement = $settings['compactWindow'] }
+    } catch {}
+}
+function Save-CompactModePreference {
+    $settings = Get-AppSettingsMap
+    $settings['compactMode'] = [bool]$Script:CompactMode
+    if ($Script:NormalWindowPlacement) { $settings['window'] = $Script:NormalWindowPlacement }
+    if ($Script:CompactWindowPlacement) { $settings['compactWindow'] = $Script:CompactWindowPlacement }
+    Save-AppSettings $settings
+}
+function Set-ElementVisibility([string]$Name, [bool]$Visible) {
+    $element = Find $Name
+    if ($element) { $element.Visibility = $(if ($Visible) { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed }) }
+}
+function Get-CurrentWindowPlacement {
+    if (-not $Script:Window) { return $null }
+    if ([double]::IsNaN($Script:Window.Left) -or [double]::IsNaN($Script:Window.Top)) { return $null }
+    [ordered]@{
+        left = [Math]::Round([double]$Script:Window.Left, 2)
+        top = [Math]::Round([double]$Script:Window.Top, 2)
+        width = [Math]::Round([double]$Script:Window.Width, 2)
+        height = [Math]::Round([double]$Script:Window.Height, 2)
+    }
+}
+function Restore-PlacementFromMap($Placement, [double]$FallbackWidth, [double]$FallbackHeight) {
+    if (-not $Script:Window -or -not $Placement) { return }
+    try {
+        if ($Placement -is [System.Collections.IDictionary]) {
+            $left = [double]$Placement['left']
+            $top = [double]$Placement['top']
+            $width = if ($Placement.Contains('width')) { [double]$Placement['width'] } else { $FallbackWidth }
+            $height = if ($Placement.Contains('height')) { [double]$Placement['height'] } else { $FallbackHeight }
+        } else {
+            $left = [double]$Placement.left
+            $top = [double]$Placement.top
+            $width = if ($Placement.PSObject.Properties['width']) { [double]$Placement.width } else { $FallbackWidth }
+            $height = if ($Placement.PSObject.Properties['height']) { [double]$Placement.height } else { $FallbackHeight }
+        }
+        if (Test-WindowPlacementVisible $left $top $width $height) {
+            $Script:Window.WindowStartupLocation = [Windows.WindowStartupLocation]::Manual
+            $Script:Window.Left = $left
+            $Script:Window.Top = $top
+        }
+    } catch {}
+}
+function Set-CompactButtonVisual {
+    Set-Text 'CompactButtonText' ($(if ($Script:CompactMode) { Get-UiText '全' 'Full' } else { Get-UiText '简' 'Mini' }))
+    $floating = Find 'CompactFloatingButton'
+    if ($floating) { $floating.Content = Get-UiText '全' 'Full' }
+}
+function Apply-CompactMode {
+    if (-not $Script:Window) { return }
+    $compact = [bool]$Script:CompactMode
+    $root = Find 'RootShell'
+    $main = Find 'MainGrid'
+    $topStats = Find 'TopStatsPanel'
+    $topGrid = Find 'TopStatsGrid'
+    $compactPanel = Find 'CompactContentPanel'
+    $ringCanvas = Find 'RingCanvas'
+    $resetGrid = Find 'ResetTimesGrid'
+
+    if ($compact) {
+        $Script:Window.Width = 300
+        $Script:Window.Height = 306
+        if ($root) {
+            $root.Margin = [Windows.Thickness]::new(0)
+            $root.CornerRadius = [Windows.CornerRadius]::new(20)
+            $root.BorderThickness = [Windows.Thickness]::new(0)
+            $root.Background = New-Brush '#00FFFFFF'
+        }
+        if ($main) {
+            $main.Margin = [Windows.Thickness]::new(4)
+            $main.RowDefinitions[0].Height = [Windows.GridLength]::new(0)
+            $main.RowDefinitions[1].Height = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+            $main.RowDefinitions[2].Height = [Windows.GridLength]::new(0)
+            $main.RowDefinitions[3].Height = [Windows.GridLength]::new(0)
+        }
+        if ($topStats) {
+            $topStats.Padding = [Windows.Thickness]::new(0)
+            $topStats.CornerRadius = [Windows.CornerRadius]::new(20)
+            $topStats.BorderThickness = [Windows.Thickness]::new(1)
+            $topStats.BorderBrush = New-Brush '#99FFFFFF'
+            $topStats.Background = New-Brush '#DDEAF3F7'
+        }
+        if ($topGrid) {
+            $topGrid.ColumnDefinitions[0].Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+            $topGrid.ColumnDefinitions[1].Width = [Windows.GridLength]::new(0)
+        }
+        if ($compactPanel) { $compactPanel.HorizontalAlignment = [Windows.HorizontalAlignment]::Stretch }
+        if ($ringCanvas) { $ringCanvas.Margin = [Windows.Thickness]::new(0, 8, 0, 0) }
+        if ($resetGrid) { $resetGrid.Margin = [Windows.Thickness]::new(30, 230, 30, 0) }
+        Set-ElementVisibility 'HeaderPanel' $false
+        Set-ElementVisibility 'StatsRightPanel' $false
+        Set-ElementVisibility 'TaskBoardPanel' $false
+        Set-ElementVisibility 'FooterCluster' $false
+        Set-ElementVisibility 'CompactFloatingButton' $true
+        Restore-PlacementFromMap $Script:CompactWindowPlacement 300 306
+    } else {
+        $Script:Window.Width = 1120
+        $Script:Window.Height = 900
+        if ($root) { $root.Margin = [Windows.Thickness]::new(20); $root.CornerRadius = [Windows.CornerRadius]::new(36); $root.BorderThickness = [Windows.Thickness]::new(1.2) }
+        if ($main) {
+            $main.Margin = [Windows.Thickness]::new(16)
+            $main.RowDefinitions[0].Height = [Windows.GridLength]::new(66)
+            $main.RowDefinitions[1].Height = [Windows.GridLength]::new(346)
+            $main.RowDefinitions[2].Height = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+            $main.RowDefinitions[3].Height = [Windows.GridLength]::new(28)
+        }
+        if ($topStats) { $topStats.Padding = [Windows.Thickness]::new(22); $topStats.CornerRadius = [Windows.CornerRadius]::new(24); $topStats.BorderThickness = [Windows.Thickness]::new(1); $topStats.Background = New-Brush '#58D2E9F1' }
+        if ($topGrid) {
+            $topGrid.ColumnDefinitions[0].Width = [Windows.GridLength]::new(250)
+            $topGrid.ColumnDefinitions[1].Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+        }
+        if ($compactPanel) { $compactPanel.HorizontalAlignment = [Windows.HorizontalAlignment]::Stretch }
+        if ($ringCanvas) { $ringCanvas.Margin = [Windows.Thickness]::new(0, 24, 0, 0) }
+        if ($resetGrid) { $resetGrid.Margin = [Windows.Thickness]::new(16, 254, 18, 0) }
+        Set-ElementVisibility 'HeaderPanel' $true
+        Set-ElementVisibility 'StatsRightPanel' $true
+        Set-ElementVisibility 'TaskBoardPanel' $true
+        Set-ElementVisibility 'FooterCluster' $true
+        Set-ElementVisibility 'CompactFloatingButton' $false
+        Restore-PlacementFromMap $Script:NormalWindowPlacement 1120 900
+    }
+    Set-CompactButtonVisual
+    Apply-Theme
+    if ($compact -and $root) {
+        $root.Background = New-Brush '#00FFFFFF'
+        $root.BorderThickness = [Windows.Thickness]::new(0)
+    }
+    if ($compact -and $topStats) { $topStats.Background = New-Brush '#DDEAF3F7' }
+    Send-WindowToBottom
+}
+function Set-CompactMode([bool]$Enabled) {
+    if ($Script:Window) {
+        if ($Script:CompactMode) { $Script:CompactWindowPlacement = Get-CurrentWindowPlacement }
+        else { $Script:NormalWindowPlacement = Get-CurrentWindowPlacement }
+    }
+    $Script:CompactMode = $Enabled
+    Apply-CompactMode
+    Save-CompactModePreference
+}
+function Toggle-CompactMode { Set-CompactMode (-not $Script:CompactMode) }
 function Get-LegacyStartupCommand {
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (-not (Test-Path $powershell)) { $powershell = 'powershell.exe' }
@@ -644,18 +795,10 @@ function Test-WindowPlacementVisible([double]$Left, [double]$Top, [double]$Width
 function Restore-WindowPlacement {
     if (-not $Script:Window) { return }
     $settings = Get-AppSettingsMap
-    if (-not $settings.Contains('window')) { return }
+    $key = if ($Script:CompactMode) { 'compactWindow' } else { 'window' }
+    if (-not $settings.Contains($key)) { return }
     try {
-        $win = $settings['window']
-        $left = [double]$win.left
-        $top = [double]$win.top
-        $width = [double]$win.width
-        $height = [double]$win.height
-        if (Test-WindowPlacementVisible $left $top $width $height) {
-            $Script:Window.WindowStartupLocation = [Windows.WindowStartupLocation]::Manual
-            $Script:Window.Left = $left
-            $Script:Window.Top = $top
-        }
+        Restore-PlacementFromMap $settings[$key] ($(if ($Script:CompactMode) { 300 } else { 1120 })) ($(if ($Script:CompactMode) { 306 } else { 900 }))
     } catch {}
 }
 function Save-WindowPlacement {
@@ -663,12 +806,20 @@ function Save-WindowPlacement {
     try {
         if ([double]::IsNaN($Script:Window.Left) -or [double]::IsNaN($Script:Window.Top)) { return }
         $settings = Get-AppSettingsMap
-        $settings['window'] = [ordered]@{
+        $placement = [ordered]@{
             left = [Math]::Round([double]$Script:Window.Left, 2)
             top = [Math]::Round([double]$Script:Window.Top, 2)
             width = [Math]::Round([double]$Script:Window.Width, 2)
             height = [Math]::Round([double]$Script:Window.Height, 2)
         }
+        if ($Script:CompactMode) {
+            $Script:CompactWindowPlacement = $placement
+            $settings['compactWindow'] = $placement
+        } else {
+            $Script:NormalWindowPlacement = $placement
+            $settings['window'] = $placement
+        }
+        $settings['compactMode'] = [bool]$Script:CompactMode
         Save-AppSettings $settings
     } catch {}
 }
@@ -817,6 +968,7 @@ function Show-TrayMenu([System.Drawing.Point]$ScreenPoint = [System.Windows.Form
     $stack = [Windows.Controls.StackPanel]::new()
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '显示 / 隐藏' 'Show / Hide') '◐' $false { Toggle-TrayWindow })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '刷新' 'Refresh') '↻' $false { Show-MainWindow; Update-Ui })) | Out-Null
+    $stack.Children.Add((New-TrayMenuRow (Get-UiText '简洁模式' 'Compact Mode') '◌' $Script:CompactMode { Show-MainWindow; Toggle-CompactMode })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '贴在桌面底层' 'Keep On Desktop') '▾' $Script:KeepOnDesktopBottom { $Script:KeepOnDesktopBottom = -not $Script:KeepOnDesktopBottom; if ($Script:KeepOnDesktopBottom) { Send-WindowToBottom } })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '开机自启动' 'Launch At Login') '⏻' (Get-StartupEnabled) {
         try { Set-StartupEnabled (-not (Get-StartupEnabled)) } catch { [System.Windows.Forms.MessageBox]::Show(('开机自启动设置失败：' + $_.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null }
@@ -884,7 +1036,9 @@ function Load-Window {
     $Script:Window = [Windows.Markup.XamlReader]::Load($reader)
     if (Test-Path $Script:IconPng) { (Find 'LogoImage').Source = [Windows.Media.Imaging.BitmapImage]::new([Uri]$Script:IconPng) }
     Apply-RingTextLayout
+    Load-AppPreferences
     Restore-WindowPlacement
+    Apply-CompactMode
     Repair-StartupCommand
     Initialize-TrayIcon
     $Script:Window.Add_SourceInitialized({ Send-WindowToBottom })
@@ -893,6 +1047,8 @@ function Load-Window {
     $Script:Window.Add_MouseLeftButtonDown({ try { Close-TrayMenu; $Script:Window.DragMove() } catch {} })
     (Find 'CloseButton').Add_Click({ Hide-ToTray })
     (Find 'RefreshButton').Add_Click({ Update-Ui })
+    (Find 'CompactButton').Add_Click({ Toggle-CompactMode })
+    (Find 'CompactFloatingButton').Add_Click({ Toggle-CompactMode })
     (Find 'AutoRefreshToggle').Add_PreviewMouseLeftButtonDown({ param($sender,$e) $e.Handled = $true; Toggle-AutoRefresh })
     (Find 'ThemeAutoSegment').Add_PreviewMouseLeftButtonDown({ param($sender,$e) $e.Handled = $true; Set-ThemeMode 'auto' })
     (Find 'ThemeLightSegment').Add_PreviewMouseLeftButtonDown({ param($sender,$e) $e.Handled = $true; Set-ThemeMode 'light' })
