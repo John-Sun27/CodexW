@@ -28,6 +28,8 @@ $Script:SelfPath = $MyInvocation.MyCommand.Path
 $Script:IconPng = Join-Path $Script:RepoRoot 'Resources\CodexW-icon.png'
 $Script:CodexHome = Join-Path $env:USERPROFILE '.codex'
 $Script:AllowExit = $false
+$Script:IsQuitting = $false
+$Script:App = $null
 $Script:KeepOnDesktopBottom = $true
 $Script:TrayNotify = $null
 $Script:TrayBitmap = $null
@@ -528,6 +530,36 @@ function Close-TrayMenu {
     try { $menu.Close() } catch {}
 }
 function Dispose-TrayIcon { Close-TrayMenu; if ($Script:TrayNotify) { $Script:TrayNotify.Visible = $false; $Script:TrayNotify.Dispose(); $Script:TrayNotify = $null }; if ($Script:TrayIcon) { $Script:TrayIcon.Dispose(); $Script:TrayIcon = $null }; if ($Script:TrayBitmap) { $Script:TrayBitmap.Dispose(); $Script:TrayBitmap = $null } }
+function Quit-CodexW {
+    if ($Script:IsQuitting) { return }
+    $Script:IsQuitting = $true
+    $Script:AllowExit = $true
+    try { Save-WindowPlacement } catch {}
+    try { Stop-AutoRefreshTimer } catch {}
+    $shutdown = {
+        try {
+            Close-TrayMenu
+            if ($Script:Window) {
+                try { $Script:Window.Close() } catch {}
+            }
+            Dispose-TrayIcon
+            $app = [Windows.Application]::Current
+            if ($app) { $app.Shutdown(0) }
+        } catch {
+            try { Dispose-TrayIcon } catch {}
+            [Environment]::Exit(0)
+        }
+    }
+    try {
+        if ($Script:Window -and $Script:Window.Dispatcher) {
+            [void]$Script:Window.Dispatcher.BeginInvoke([Action]$shutdown, [Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        } else {
+            & $shutdown
+        }
+    } catch {
+        & $shutdown
+    }
+}
 function Invoke-TrayMenuAction([scriptblock]$Action) {
     try {
         Close-TrayMenu
@@ -635,7 +667,7 @@ function Show-TrayMenu([System.Drawing.Point]$ScreenPoint = [System.Windows.Form
     $line.Margin = [Windows.Thickness]::new(8, 7, 8, 7)
     $line.Background = New-Brush '#45FFFFFF'
     $stack.Children.Add($line) | Out-Null
-    $stack.Children.Add((New-TrayMenuRow (Get-UiText '退出' 'Quit') '×' $false { $Script:AllowExit = $true; Save-WindowPlacement; Dispose-TrayIcon; if ($Script:Window) { $Script:Window.Close() } } $true)) | Out-Null
+    $stack.Children.Add((New-TrayMenuRow (Get-UiText '退出' 'Quit') '×' $false { Quit-CodexW } $true)) | Out-Null
     $shell.Child = $stack
     $menu.Content = $shell
     $point = Convert-ScreenPointToDip $ScreenPoint
@@ -725,4 +757,4 @@ function Update-Ui { $s=Read-LocalSnapshot; $p=if($s.primary){[double]$s.primary
 if ($DumpJson) { Read-LocalSnapshot | ConvertTo-Json -Depth 12; exit 0 }
 Load-Window
 Update-Ui
-[void]$Script:Window.Show(); Send-WindowToBottom; $app = [Windows.Application]::new(); $app.Add_DispatcherUnhandledException({ param($sender,$e) $e.Handled = $true; try { [System.Windows.Forms.MessageBox]::Show(('CodexW 发生错误：' + $e.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null } catch {} }); [void]$app.Run($Script:Window)
+[void]$Script:Window.Show(); Send-WindowToBottom; $Script:App = [Windows.Application]::new(); $Script:App.Add_DispatcherUnhandledException({ param($sender,$e) $e.Handled = $true; try { [System.Windows.Forms.MessageBox]::Show(('CodexW 发生错误：' + $e.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null } catch {} }); [void]$Script:App.Run($Script:Window)
