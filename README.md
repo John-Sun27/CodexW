@@ -1,5 +1,9 @@
 # CodexW
 
+<p align="center">
+  <strong>English</strong> / <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 CodexW is a Windows-native desktop usage panel for Codex, adapted from
 [`shanggqm/codexU`](https://github.com/shanggqm/codexU).
 
