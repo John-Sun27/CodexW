@@ -432,8 +432,42 @@ function Send-WindowToBottom {
     } catch {}
 }
 
-function Show-MainWindow { if ($Script:Window) { Close-TrayMenu; $Script:Window.Show(); $Script:Window.WindowState = [Windows.WindowState]::Normal; Send-WindowToBottom } }
-function Hide-ToTray { if ($Script:Window) { Save-WindowPlacement; Close-TrayMenu; $Script:Window.Hide() } }
+function Test-WindowCanShow {
+    if (-not $Script:Window -or $Script:IsQuitting) { return $false }
+    try {
+        if ($Script:Window.Dispatcher.HasShutdownStarted -or $Script:Window.Dispatcher.HasShutdownFinished) { return $false }
+        return $true
+    } catch {
+        return $false
+    }
+}
+function Test-DisposedHwndException($Exception) {
+    if (-not $Exception) { return $false }
+    return ($Exception -is [System.ObjectDisposedException] -or $Exception.Message -like '*HwndSource*')
+}
+function Show-MainWindow {
+    if (-not (Test-WindowCanShow)) { return }
+    try {
+        Close-TrayMenu
+        $Script:Window.Show()
+        $Script:Window.WindowState = [Windows.WindowState]::Normal
+        Send-WindowToBottom
+    } catch {
+        if (Test-DisposedHwndException $_.Exception) { return }
+        throw
+    }
+}
+function Hide-ToTray {
+    if (-not (Test-WindowCanShow)) { return }
+    try {
+        Save-WindowPlacement
+        Close-TrayMenu
+        $Script:Window.Hide()
+    } catch {
+        if (Test-DisposedHwndException $_.Exception) { return }
+        throw
+    }
+}
 function Set-Text($Name, [string]$Value) {
     $el = Find $Name
     if ($el) { try { $el.Text = $Value } catch {} }
@@ -844,7 +878,12 @@ function Queue-WindowPlacementSave {
     if ($Script:PositionSaveTimer.IsEnabled) { $Script:PositionSaveTimer.Stop() }
     $Script:PositionSaveTimer.Start()
 }
-function Toggle-TrayWindow { if ($Script:Window -and $Script:Window.IsVisible) { Hide-ToTray } else { Show-MainWindow } }
+function Toggle-TrayWindow {
+    if (-not (Test-WindowCanShow)) { return }
+    $visible = $false
+    try { $visible = [bool]$Script:Window.IsVisible } catch { $visible = $false }
+    if ($visible) { Hide-ToTray } else { Show-MainWindow }
+}
 function Close-TrayMenu {
     $menu = $Script:TrayMenuWindow
     if (-not $menu) { return }
@@ -1103,5 +1142,21 @@ function Update-Ui { $s=Read-LocalSnapshot; $p=if($s.primary){[double]$s.primary
 if ($DumpJson) { Read-LocalSnapshot | ConvertTo-Json -Depth 12; exit 0 }
 Load-Window
 Update-Ui
-[void]$Script:Window.Show(); Send-WindowToBottom; $Script:App = [Windows.Application]::new(); $Script:App.Add_DispatcherUnhandledException({ param($sender,$e) $e.Handled = $true; try { [System.Windows.Forms.MessageBox]::Show(('CodexW 发生错误：' + $e.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null } catch {} }); [void]$Script:App.Run($Script:Window)
-
+$Script:App = [Windows.Application]::new()
+$Script:App.Add_DispatcherUnhandledException({
+    param($sender,$e)
+    $e.Handled = $true
+    if (Test-DisposedHwndException $e.Exception) { return }
+    try {
+        [System.Windows.Forms.MessageBox]::Show(('CodexW 发生错误：' + $e.Exception.Message), 'CodexW', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } catch {}
+})
+try {
+    if (Test-WindowCanShow) {
+        [void]$Script:Window.Show()
+        Send-WindowToBottom
+    }
+} catch {
+    if (-not (Test-DisposedHwndException $_.Exception)) { throw }
+}
+[void]$Script:App.Run($Script:Window)
