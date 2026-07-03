@@ -56,7 +56,6 @@ background server and does not upload your local usage data.
 ```text
 CodexWLauncher.exe           Native Windows launcher, included in release packages.
 Start-CodexW.cmd             Fallback root launcher.
-windows/Start-CodexW.cmd     Hidden-window launcher.
 windows/CodexW.ps1           Main WPF app.
 Resources/CodexW-icon.png    Tray and header icon.
 docs/screenshot-*.png        README screenshots.
@@ -95,6 +94,7 @@ preserved in `LICENSE`, and source attribution is listed in `NOTICE.md`.
 ## License
 
 MIT.
+
 
 
 
