@@ -53,12 +53,22 @@ background server and does not upload your local usage data.
 
 ## Files
 
+Release packages contain only the files needed to run CodexW:
+
 ```text
-CodexWLauncher.exe           Native Windows launcher, included in release packages.
-Start-CodexW.cmd             Fallback root launcher.
-windows/CodexW.ps1           Main WPF app.
-Resources/CodexW-icon.png    Tray and header icon.
-docs/screenshot-*.png        README screenshots.
+CodexWLauncher.exe         Recommended native Windows launcher.
+Start-CodexW.cmd           Fallback launcher for troubleshooting.
+windows/CodexW.ps1         Main PowerShell/WPF application.
+Resources/CodexW-icon.ico  Launcher, window, and tray icon.
+Resources/CodexW-icon.png  Header and tray image source.
+```
+
+Repository-only files are kept for documentation or development and are not included in the release zip:
+
+```text
+docs/screenshot-*.png      README preview screenshots.
+tools/CodexWLauncher.cs    Native launcher source.
+README*.md, LICENSE, ...   Repository documentation and metadata.
 ```
 
 ## Settings
@@ -94,6 +104,7 @@ preserved in `LICENSE`, and source attribution is listed in `NOTICE.md`.
 ## License
 
 MIT.
+
 
 
 
