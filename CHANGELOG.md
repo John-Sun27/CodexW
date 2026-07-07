@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 - 2026-07-07
+
+- Fixed manual refresh so the panel redraws immediately after the background
+  snapshot cache is updated.
+- Added visible manual refresh feedback for refresh-in-progress and refresh
+  complete states.
+- Kept the low-memory refresh model: Codex session logs are scanned in a short
+  hidden background PowerShell process, then released after the snapshot is
+  written.
+- Release zip now remains runtime-only.
+
 ## 0.1.0 - 2026-07-03
 
 - Initial public Windows release as CodexW.

@@ -52,6 +52,9 @@ $Script:SnapshotProcess = $null
 $Script:SnapshotPollTimer = $null
 $Script:SnapshotStartedAt = [DateTime]::MinValue
 $Script:SnapshotTimeoutSeconds = 120
+$Script:SnapshotCacheLastWriteTime = [DateTime]::MinValue
+$Script:ManualRefreshPending = $false
+$Script:RefreshFeedbackTimer = $null
 $Script:CompactMode = $false
 $Script:NormalWindowPlacement = $null
 $Script:CompactWindowPlacement = $null
@@ -335,9 +338,70 @@ function Read-SnapshotCache {
     }
 }
 
+function Set-RefreshFeedback {
+    param([string]$ZhText, [string]$EnText, [bool]$Busy = $false)
+    $text = Get-UiText $ZhText $EnText
+    try {
+        $footer = Find 'FooterText'
+        if ($footer) { $footer.Text = $text }
+    } catch {}
+    try {
+        $button = Find 'RefreshButton'
+        if ($button) { $button.Content = $(if ($Busy) { '…' } else { '✓' }) }
+    } catch {}
+    if (-not $Busy) {
+        if (-not $Script:RefreshFeedbackTimer) {
+            $Script:RefreshFeedbackTimer = [Windows.Threading.DispatcherTimer]::new()
+            $Script:RefreshFeedbackTimer.Interval = [TimeSpan]::FromSeconds(1.6)
+            $Script:RefreshFeedbackTimer.Add_Tick({
+                try { $Script:RefreshFeedbackTimer.Stop() } catch {}
+                try {
+                    $button = Find 'RefreshButton'
+                    if ($button) { $button.Content = '↻' }
+                } catch {}
+            })
+        }
+        $Script:RefreshFeedbackTimer.Stop()
+        $Script:RefreshFeedbackTimer.Start()
+    }
+}
+
+function Render-SnapshotCache {
+    param([bool]$Force = $false, [bool]$Feedback = $false)
+    $path = Get-SnapshotCachePath
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try { $lastWrite = (Get-Item -LiteralPath $path).LastWriteTimeUtc } catch { return $false }
+    if (-not $Force -and $lastWrite -le $Script:SnapshotCacheLastWriteTime) { return $false }
+
+    $snapshot = Read-SnapshotCache
+    if (-not $snapshot) { return $false }
+
+    Render-UiSnapshot $snapshot
+    $Script:SnapshotCacheLastWriteTime = $lastWrite
+    if ($Feedback) {
+        Set-RefreshFeedback ((Get-UiText '已刷新 ' 'Refreshed ') + (Get-Date).ToString('HH:mm')) ((Get-UiText '已刷新 ' 'Refreshed ') + (Get-Date).ToString('HH:mm')) $false
+    }
+    return $true
+}
+
 function Start-SnapshotProcess {
+    param([bool]$Manual = $false)
     if ($DumpJson) { return }
-    if ($Script:SnapshotProcess -and -not $Script:SnapshotProcess.HasExited) { return }
+    if ($Manual) {
+        $Script:ManualRefreshPending = $true
+        Set-RefreshFeedback '刷新中...' 'Refreshing...' $true
+    }
+    if ($Script:SnapshotProcess -and -not $Script:SnapshotProcess.HasExited) {
+        if (-not $Script:SnapshotPollTimer -or -not $Script:SnapshotPollTimer.IsEnabled) {
+            if (-not $Script:SnapshotPollTimer) {
+                $Script:SnapshotPollTimer = [Windows.Threading.DispatcherTimer]::new()
+                $Script:SnapshotPollTimer.Interval = [TimeSpan]::FromSeconds(1)
+                $Script:SnapshotPollTimer.Add_Tick({ Poll-SnapshotProcess })
+            }
+            $Script:SnapshotPollTimer.Start()
+        }
+        return
+    }
 
     $cachePath = Get-SnapshotCachePath
     $exe = Join-Path $PSHOME 'powershell.exe'
@@ -379,6 +443,10 @@ function Poll-SnapshotProcess {
             try { $proc.Kill() } catch {}
             try { $proc.Dispose() } catch {}
             $Script:SnapshotProcess = $null
+            if ($Script:ManualRefreshPending) {
+                $Script:ManualRefreshPending = $false
+                Set-RefreshFeedback '刷新超时' 'Refresh timed out' $false
+            }
             if ($Script:SnapshotPollTimer) { $Script:SnapshotPollTimer.Stop() }
         }
         return
@@ -388,10 +456,11 @@ function Poll-SnapshotProcess {
     $Script:SnapshotProcess = $null
     if ($Script:SnapshotPollTimer) { $Script:SnapshotPollTimer.Stop() }
 
-    $snapshot = Read-SnapshotCache
-    if ($snapshot) {
-        Render-UiSnapshot $snapshot
+    $rendered = Render-SnapshotCache $true $Script:ManualRefreshPending
+    if (-not $rendered -and $Script:ManualRefreshPending) {
+        Set-RefreshFeedback '刷新未完成' 'Refresh incomplete' $false
     }
+    $Script:ManualRefreshPending = $false
 }
 
 function Read-Automations {
@@ -1116,7 +1185,7 @@ function Show-TrayMenu([System.Drawing.Point]$ScreenPoint = [System.Windows.Form
     $shell.Effect = $shadow
     $stack = [Windows.Controls.StackPanel]::new()
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '显示 / 隐藏' 'Show / Hide') '◐' $false { Toggle-TrayWindow })) | Out-Null
-    $stack.Children.Add((New-TrayMenuRow (Get-UiText '刷新' 'Refresh') '↻' $false { Show-MainWindow; Update-Ui })) | Out-Null
+    $stack.Children.Add((New-TrayMenuRow (Get-UiText '刷新' 'Refresh') '↻' $false { Show-MainWindow; Invoke-ManualRefresh })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '简洁模式' 'Compact Mode') '◌' $Script:CompactMode { Show-MainWindow; Toggle-CompactMode })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '贴在桌面底层' 'Keep On Desktop') '▾' $Script:KeepOnDesktopBottom { $Script:KeepOnDesktopBottom = -not $Script:KeepOnDesktopBottom; if ($Script:KeepOnDesktopBottom) { Send-WindowToBottom } })) | Out-Null
     $stack.Children.Add((New-TrayMenuRow (Get-UiText '开机自启动' 'Launch At Login') '⏻' (Get-StartupEnabled) {
@@ -1197,7 +1266,7 @@ function Load-Window {
     $Script:Window.Add_LocationChanged({ if ($Script:Window -and $Script:Window.IsVisible -and $Script:Window.WindowState -eq [Windows.WindowState]::Normal) { Queue-WindowPlacementSave } })
     $Script:Window.Add_MouseLeftButtonDown({ try { Close-TrayMenu; $Script:Window.DragMove() } catch {} })
     (Find 'CloseButton').Add_Click({ Hide-ToTray })
-    (Find 'RefreshButton').Add_Click({ Update-Ui })
+    (Find 'RefreshButton').Add_Click({ Invoke-ManualRefresh })
     (Find 'CompactButton').Add_Click({ Toggle-CompactMode })
     (Find 'CompactFloatingButton').Add_Click({ Toggle-CompactMode })
     (Find 'AutoRefreshToggle').Add_PreviewMouseLeftButtonDown({ param($sender,$e) $e.Handled = $true; Toggle-AutoRefresh })
@@ -1236,9 +1305,18 @@ function Add-SplitRow($Panel, [string]$DotColor, [string]$Label, [string]$Value)
 function Get-VisibleTokenTotal($Bucket) { $visible=[int64]$Bucket.input+[int64]$Bucket.output; if($visible -gt 0){return $visible}; return [int64]$Bucket.total }
 function Set-SplitLine($Prefix, $Bucket) { $uncached=[Math]::Max(0,$Bucket.input-$Bucket.cached); $panel=Find ($Prefix+'Split'); $panel.Children.Clear(); Add-SplitRow $panel '#0D8BFF' (Get-UiText '未缓存' 'Uncached') (Format-TokenCount $uncached); Add-SplitRow $panel '#875EFF' (Get-UiText '缓存' 'Cached') (Format-TokenCount $Bucket.cached); Add-SplitRow $panel '#FF9F0A' (Get-UiText '输出' 'Output') (Format-TokenCount $Bucket.output); $total=[Math]::Max(1,$uncached+$Bucket.cached+$Bucket.output); $max=210.0; $inW=[Math]::Max(12,$max*$uncached/$total); $caW=[Math]::Max(18,$max*$Bucket.cached/$total); $outW=[Math]::Max(4,$max*$Bucket.output/$total); (Find ($Prefix+'BarInput')).Width=$inW; (Find ($Prefix+'BarCached')).Margin=[Windows.Thickness]::new($inW,0,0,0); (Find ($Prefix+'BarCached')).Width=$caW; (Find ($Prefix+'BarOut')).Width=$outW }
 function Add-TaskCard($Panel,$Item,[string]$Accent,[string]$Chip,[string]$ChipBg){ $border=[Windows.Controls.Border]::new(); $border.Margin=[Windows.Thickness]::new(0,0,0,12); $border.Padding=[Windows.Thickness]::new(12); $border.CornerRadius=[Windows.CornerRadius]::new(10); $border.Background=New-Brush '#DDEBF0F4'; $border.BorderBrush=New-Brush '#70FFFFFF'; $border.BorderThickness=[Windows.Thickness]::new(1); $stack=[Windows.Controls.StackPanel]::new(); $border.Child=$stack; $top=[Windows.Controls.DockPanel]::new(); $code=[Windows.Controls.TextBlock]::new(); $code.Text=$Item.code; $code.FontWeight='Bold'; $code.FontSize=13; $code.Foreground=New-Brush '#65727B'; $time=[Windows.Controls.TextBlock]::new(); $time.Text=Get-RelativeText $Item.updatedAt; $time.FontSize=12; $time.Foreground=New-Brush '#89949A'; $time.HorizontalAlignment='Right'; [Windows.Controls.DockPanel]::SetDock($time,'Right'); $top.Children.Add($time)|Out-Null; $top.Children.Add($code)|Out-Null; $stack.Children.Add($top)|Out-Null; $title=[Windows.Controls.TextBlock]::new(); $title.Text=$Item.title; $title.FontWeight='Black'; $title.FontSize=14; $title.Foreground=New-Brush '#111820'; $title.Margin=[Windows.Thickness]::new(0,8,0,4); $stack.Children.Add($title)|Out-Null; $detail=[Windows.Controls.TextBlock]::new(); $detail.Text=$Item.detail; $detail.FontWeight='SemiBold'; $detail.FontSize=12.5; $detail.Foreground=New-Brush '#626B72'; $detail.Margin=[Windows.Thickness]::new(0,0,0,10); $stack.Children.Add($detail)|Out-Null; $chipBorder=[Windows.Controls.Border]::new(); $chipBorder.Background=New-Brush $ChipBg; $chipBorder.CornerRadius=[Windows.CornerRadius]::new(14); $chipBorder.Padding=[Windows.Thickness]::new(10,4,10,4); $chipBorder.HorizontalAlignment='Left'; $txt=[Windows.Controls.TextBlock]::new(); $txt.Text=$Chip; $txt.FontWeight='Black'; $txt.FontSize=12; $txt.Foreground=New-Brush $Accent; $chipBorder.Child=$txt; $stack.Children.Add($chipBorder)|Out-Null; $Panel.Children.Add($border)|Out-Null }
-function Render-UiSnapshot($s) { if(-not $s){ return }; $p=if($s.primary){[double]$s.primary.remainingPercent}else{0}; $q=if($s.secondary){[double]$s.secondary.remainingPercent}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@($s.recentTasks); if(-not $recent -or $recent.Count -eq 0){$recent=@()}; for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=(Get-UiText '刷新 ' 'Refresh ')+(Get-Date).ToString('HH:mm')+'   ⌘W'; Set-AutoRefreshVisual }
-function Update-Ui { $snapshot = Read-SnapshotCache; if($snapshot){ Render-UiSnapshot $snapshot }; Start-SnapshotProcess }
-if ($DumpJson) { $snapshot = Read-LocalSnapshot; if ($SnapshotOut) { Save-SnapshotCache $snapshot $SnapshotOut }; $snapshot | ConvertTo-Json -Depth 12; exit 0 }
+function Render-UiSnapshot($s) { if(-not $s){ return }; $p=if($s.primary){[double]$s.primary.remainingPercent}else{0}; $q=if($s.secondary){[double]$s.secondary.remainingPercent}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@($s.recentTasks); if(-not $recent -or $recent.Count -eq 0){$recent=@()}; for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=Get-FooterRefreshText ; Set-AutoRefreshVisual }
+function Update-Ui { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $false }
+function Invoke-ManualRefresh { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $true }
+if ($DumpJson) {
+    $snapshot = Read-LocalSnapshot
+    if ($SnapshotOut) {
+        Save-SnapshotCache $snapshot $SnapshotOut
+        exit 0
+    }
+    $snapshot | ConvertTo-Json -Depth 12
+    exit 0
+}
 Load-Window
 Update-Ui
 $Script:App = [Windows.Application]::new()
@@ -1259,3 +1337,5 @@ try {
     if (-not (Test-DisposedHwndException $_.Exception)) { throw }
 }
 [void]$Script:App.Run($Script:Window)
+
+
