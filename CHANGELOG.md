@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3 - 2026-07-07
+
+- Prefer Codex's reported remaining quota percentage when available instead of
+  always deriving it from `100 - used_percent`.
+- This makes the 5-hour and weekly quota display match the official Codex menu
+  more closely when the local log contains both values.
+
 ## 0.1.2 - 2026-07-07
 
 - Fixed a release startup crash caused by the missing footer refresh text

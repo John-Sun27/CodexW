@@ -136,10 +136,13 @@ function Add-TokenUsage {
 function Convert-RateWindow {
     param($Window)
     if ($null -eq $Window) { return $null }
-    $used = [double](Get-PropValue $Window @('used_percent', 'usedPercent'))
+    $usedRaw = Get-PropValue $Window @('used_percent', 'usedPercent')
+    $remainingRaw = Get-PropValue $Window @('remaining_percent', 'remainingPercent')
+    $used = if ($null -ne $usedRaw) { [double]$usedRaw } elseif ($null -ne $remainingRaw) { 100 - [double]$remainingRaw } else { 0 }
+    $remaining = if ($null -ne $remainingRaw) { [double]$remainingRaw } else { 100 - $used }
     [ordered]@{
-        usedPercent = $used
-        remainingPercent = [Math]::Max(0, [Math]::Min(100, 100 - $used))
+        usedPercent = [Math]::Max(0, [Math]::Min(100, $used))
+        remainingPercent = [Math]::Max(0, [Math]::Min(100, $remaining))
         windowDurationMins = Get-PropValue $Window @('window_minutes', 'windowDurationMins')
         resetsAt = Get-PropValue $Window @('resets_at', 'resetsAt')
     }
