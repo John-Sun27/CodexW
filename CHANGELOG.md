@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-07-07
+
+- Fixed a release startup crash caused by the missing footer refresh text
+  helper in the packaged WPF script.
+- Added verification so release builds fail if the helper is missing again.
+
 ## 0.1.1 - 2026-07-07
 
 - Fixed manual refresh so the panel redraws immediately after the background

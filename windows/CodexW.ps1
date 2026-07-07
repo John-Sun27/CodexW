@@ -666,6 +666,9 @@ function Set-AutoRefreshVisual {
         Set-Brush 'AutoRefreshText' 'Foreground' '#536A78'
     }
 }
+function Get-FooterRefreshText {
+    return ((Get-UiText '刷新 ' 'Refresh ') + (Get-Date).ToString('HH:mm') + '   ⌘W')
+}
 function Apply-Theme {
     $shellColor = '#C38AAEBC'
     $themeBg = '#50485561'
