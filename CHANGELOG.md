@@ -1,5 +1,14 @@
-# Changelog
+﻿# Changelog
 
+## 0.1.4 - 2026-07-11
+
+- Fixed stale quota values after newer Codex versions append rate-limit events
+  while the local session log is being scanned.
+- CodexW now performs a lightweight final read of live Codex rate updates after
+  token aggregation, so manual and scheduled refreshes use the newest 5-hour
+  and 7-day quota record without repeating the full token calculation.
+- Runtime package remains minimal: one root launcher, the WPF script, and the
+  resources required to run the panel.
 ## 0.1.3 - 2026-07-07
 
 - Prefer Codex's reported remaining quota percentage when available instead of
@@ -33,3 +42,4 @@
   launch-at-login, and graceful quit.
 - Added 5-minute low-cost auto-refresh when Codex is running.
 - Added saved window placement under `%LOCALAPPDATA%\CodexW\settings.json`.
+

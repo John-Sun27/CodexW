@@ -178,6 +178,36 @@ function Read-SharedLines {
     }
 }
 
+function Read-LatestRateLimits {
+    param($Files, $CurrentRate, [DateTime]$CurrentRateAt)
+
+    # The active Codex session can append a rate update while the full token scan runs.
+    # Re-read only rate events once the scan has finished so the UI uses the newest quota.
+    $latestRate = $CurrentRate
+    $latestRateAt = $CurrentRateAt
+    foreach ($file in $Files) {
+        try {
+            foreach ($line in (Read-SharedLines $file.FullName)) {
+                if ($line -notmatch '"rate_limits"|"rateLimits"') { continue }
+                try { $event = $line | ConvertFrom-Json } catch { continue }
+                $payload = Get-PropValue $event @('payload')
+                $rate = Get-PropValue $payload @('rate_limits', 'rateLimits')
+                if (-not $rate) { $rate = Get-PropValue $event @('rate_limits', 'rateLimits') }
+                if (-not $rate) { continue }
+
+                $ts = Get-PropValue $event @('timestamp')
+                try { $date = [DateTimeOffset]::Parse($ts).LocalDateTime } catch { $date = $file.LastWriteTime }
+                if ($date -gt $latestRateAt) {
+                    $latestRate = $rate
+                    $latestRateAt = $date
+                }
+            }
+        } catch {}
+    }
+
+    return [ordered]@{ rate = $latestRate; at = $latestRateAt }
+}
+
 function Get-SessionIndexMap {
     $map = @{}
     $path = Join-Path $Script:CodexHome 'session_index.jsonl'
@@ -269,6 +299,10 @@ function Read-LocalSnapshot {
     if ($eventCount -eq 0 -and $files.Count -gt 0) {
         $messages.Add('未找到 Codex token_count 事件。')
     }
+
+    $latestRateResult = Read-LatestRateLimits $files $latestRate $latestRateAt
+    $latestRate = $latestRateResult.rate
+    $latestRateAt = $latestRateResult.at
 
     $buckets = @()
     for ($i = 6; $i -ge 0; $i--) {
