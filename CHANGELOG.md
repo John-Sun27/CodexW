@@ -1,5 +1,12 @@
 ﻿# Changelog
 
+## 0.1.5 - 2026-07-13
+
+- Added ChatGPT-compatible quota windows: CodexW recognizes weekly windows
+  reported as the primary rate limit and handles a missing 5-hour window.
+- The full panel no longer has a close button; compact square refresh controls
+  provide refresh and full-mode actions directly from Mini mode.
+- Updated documentation for current ChatGPT/Codex data-directory compatibility.
 ## 0.1.4 - 2026-07-11
 
 - Fixed stale quota values after newer Codex versions append rate-limit events
@@ -42,4 +49,5 @@
   launch-at-login, and graceful quit.
 - Added 5-minute low-cost auto-refresh when Codex is running.
 - Added saved window placement under `%LOCALAPPDATA%\CodexW\settings.json`.
+
 

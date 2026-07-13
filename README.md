@@ -25,7 +25,7 @@ It includes both the full dashboard and a Mini mode focused on the quota ring.
 
 - Desktop panel with Codex usage statistics.
 - Full dashboard mode and compact Mini mode.
-- 5-hour and 7-day quota rings.
+- Quota rings adapt to the windows exposed by the current Codex or ChatGPT desktop app. When only a weekly window is available, CodexW shows one weekly ring.
 - Today, 7-day, and lifetime token/cost cards.
 - Value progress bar for Plus, Pro100, and Pro200 thresholds.
 - Local task board from Codex session logs and automations.
@@ -40,7 +40,7 @@ It includes both the full dashboard and a Mini mode focused on the quota ring.
 
 - Windows 10 or Windows 11.
 - PowerShell 5.1 or later, included with Windows.
-- Codex desktop/CLI local data under `%USERPROFILE%\.codex`.
+- Local Codex or ChatGPT desktop data. CodexW checks `%USERPROFILE%\.chatgpt` first and retains `%USERPROFILE%\.codex` compatibility.
 
 ## Quick Start
 
@@ -93,7 +93,7 @@ This prints the local data snapshot used by the panel.
 
 ## Privacy
 
-CodexW reads local files under `%USERPROFILE%\.codex` to display usage data.
+CodexW reads local files under `%USERPROFILE%\.chatgpt` or `%USERPROFILE%\.codex` to display usage data.
 It does not send this data anywhere.
 
 ## Attribution
@@ -104,6 +104,7 @@ preserved in `LICENSE`, and source attribution is listed in `NOTICE.md`.
 ## License
 
 MIT.
+
 
 
 
