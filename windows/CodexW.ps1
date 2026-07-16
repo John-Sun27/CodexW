@@ -101,6 +101,27 @@ function Format-ResetTime {
     } catch { return '--' }
 }
 
+function Get-QuotaDisplayPercent {
+    param([double]$Remaining, [bool]$ActivityObserved = $false)
+
+    $bounded = [Math]::Max(0.0, [Math]::Min(100.0, $Remaining))
+    if ($ActivityObserved -and $bounded -ge 100) { return 99 }
+    return [int][Math]::Floor($bounded + 0.0000001)
+}
+
+function Test-RatePayloadHasActivity {
+    param($Payload)
+
+    $info = Get-PropValue $Payload @('info')
+    $usage = Get-PropValue $info @('last_token_usage', 'lastTokenUsage')
+    if ($null -eq $usage) { return $false }
+    foreach ($name in @('total_tokens', 'totalTokens', 'input_tokens', 'inputTokens', 'output_tokens', 'outputTokens')) {
+        $value = Get-PropValue $usage @($name)
+        if ($null -ne $value -and [double]$value -gt 0) { return $true }
+    }
+    return $false
+}
+
 function New-TokenBucket {
     [ordered]@{
         input = [int64]0
@@ -143,8 +164,8 @@ function Convert-RateWindow {
     $used = if ($null -ne $usedRaw) { [double]$usedRaw } elseif ($null -ne $remainingRaw) { 100 - [double]$remainingRaw } else { 0 }
     $remaining = if ($null -ne $remainingRaw) { [double]$remainingRaw } else { 100 - $used }
     [ordered]@{
-        usedPercent = [Math]::Max(0, [Math]::Min(100, $used))
-        remainingPercent = [Math]::Max(0, [Math]::Min(100, $remaining))
+        usedPercent = [Math]::Max(0.0, [Math]::Min(100.0, $used))
+        remainingPercent = [Math]::Max(0.0, [Math]::Min(100.0, $remaining))
         windowDurationMins = Get-PropValue $Window @('window_minutes', 'windowDurationMins')
         resetsAt = Get-PropValue $Window @('resets_at', 'resetsAt')
     }
@@ -240,13 +261,26 @@ function Read-SharedLines {
     }
 }
 
+function Get-RateLimitPriority {
+    param($Rate)
+
+    if ($null -eq $Rate) { return -1 }
+    $limitId = [string](Get-PropValue $Rate @('limit_id', 'limitId'))
+    $planType = [string](Get-PropValue $Rate @('plan_type', 'planType'))
+    if ($limitId -ieq 'codex') { return 30 }
+    if (-not [string]::IsNullOrWhiteSpace($planType)) { return 20 }
+    return 0
+}
+
 function Read-LatestRateLimits {
-    param($Files, $CurrentRate, [DateTime]$CurrentRateAt)
+    param($Files, $CurrentRate, [DateTime]$CurrentRateAt, [bool]$CurrentHasActivity = $false)
 
     # The active Codex session can append a rate update while the full token scan runs.
     # Re-read only rate events once the scan has finished so the UI uses the newest quota.
     $latestRate = $CurrentRate
     $latestRateAt = $CurrentRateAt
+    $latestRateHasActivity = $CurrentHasActivity
+    $latestRatePriority = Get-RateLimitPriority $latestRate
     foreach ($file in $Files) {
         try {
             foreach ($line in (Read-SharedLines $file.FullName)) {
@@ -259,15 +293,19 @@ function Read-LatestRateLimits {
 
                 $ts = Get-PropValue $event @('timestamp')
                 try { $date = [DateTimeOffset]::Parse($ts).LocalDateTime } catch { $date = $file.LastWriteTime }
-                if ($date -gt $latestRateAt) {
+                $candidatePriority = Get-RateLimitPriority $rate
+                if ($candidatePriority -gt $latestRatePriority -or
+                    ($candidatePriority -eq $latestRatePriority -and $date -gt $latestRateAt)) {
                     $latestRate = $rate
                     $latestRateAt = $date
+                    $latestRateHasActivity = Test-RatePayloadHasActivity $payload
+                    $latestRatePriority = $candidatePriority
                 }
             }
         } catch {}
     }
 
-    return [ordered]@{ rate = $latestRate; at = $latestRateAt }
+    return [ordered]@{ rate = $latestRate; at = $latestRateAt; hasActivity = $latestRateHasActivity }
 }
 
 function Get-SessionIndexMap {
@@ -297,6 +335,24 @@ function Get-SessionIdFromFile {
     return $null
 }
 
+function Resolve-PlanLabel {
+    param($Account)
+
+    $planType = [string](Get-PropValue $Account @('planType', 'plan_type'))
+    if (-not [string]::IsNullOrWhiteSpace($planType)) {
+        return $planType.Trim().ToUpperInvariant()
+    }
+
+    # Current ChatGPT desktop logs omit plan_type for this Pro-only Codex limit.
+    $limitId = [string](Get-PropValue $Account @('limitId', 'limit_id'))
+    $limitName = [string](Get-PropValue $Account @('limitName', 'limit_name'))
+    if ($limitId -ieq 'codex_bengalfox' -or $limitName -match '(?i)GPT-5\.3-Codex-Spark') {
+        return 'PRO'
+    }
+
+    return $Script:PlanLabel
+}
+
 function Read-LocalSnapshot {
     $messages = New-Object System.Collections.Generic.List[string]
     $today = New-TokenBucket
@@ -306,6 +362,7 @@ function Read-LocalSnapshot {
     $daily = @{}
     $latestRate = $null
     $latestRateAt = [DateTime]::MinValue
+    $latestRateHasActivity = $false
 
     $now = Get-Date
     $dayStart = $now.Date
@@ -350,6 +407,7 @@ function Read-LocalSnapshot {
                 if ($rate -and $date -gt $latestRateAt) {
                     $latestRate = $rate
                     $latestRateAt = $date
+                    $latestRateHasActivity = Test-RatePayloadHasActivity $payload
                 }
                 $eventCount++
             }
@@ -362,9 +420,10 @@ function Read-LocalSnapshot {
         $messages.Add('未找到 Codex token_count 事件。')
     }
 
-    $latestRateResult = Read-LatestRateLimits $files $latestRate $latestRateAt
+    $latestRateResult = Read-LatestRateLimits $files $latestRate $latestRateAt $latestRateHasActivity
     $latestRate = $latestRateResult.rate
     $latestRateAt = $latestRateResult.at
+    $latestRateHasActivity = [bool]$latestRateResult.hasActivity
 
     $buckets = @()
     for ($i = 6; $i -ge 0; $i--) {
@@ -378,18 +437,24 @@ function Read-LocalSnapshot {
     $primary = $null
     $secondary = $null
     $planType = $null
+    $limitId = $null
+    $limitName = $null
     if ($latestRate) {
         $quotaWindows = Resolve-QuotaWindows $latestRate
         $primary = $quotaWindows.primary
         $secondary = $quotaWindows.secondary
+        if ($primary) { $primary.activityObserved = [bool]$latestRateHasActivity }
+        if ($secondary) { $secondary.activityObserved = [bool]$latestRateHasActivity }
         $planType = Get-PropValue $latestRate @('plan_type', 'planType')
+        $limitId = (Get-PropValue $latestRate @('limit_id', 'limitId'))
+        $limitName = (Get-PropValue $latestRate @('limit_name', 'limitName'))
     }
 
     [ordered]@{
         refreshedAt = (Get-Date).ToString('s')
         source = 'local-session-logs'
         codexHome = $Script:CodexHome
-        account = [ordered]@{ type = 'local'; planType = $planType; emailPresent = $false }
+        account = [ordered]@{ type = 'local'; planType = $planType; limitId = $limitId; limitName = $limitName; emailPresent = $false }
         primary = $primary
         secondary = $secondary
         local = [ordered]@{
@@ -690,7 +755,7 @@ function Get-RelativeText([datetime]$Date){ $s=(Get-Date)-$Date; if($s.TotalMinu
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="1120" Height="900" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen" Topmost="False" ShowInTaskbar="False" FontFamily="Segoe UI, Microsoft YaHei UI">
 <Grid><Border x:Name="RootShell" Margin="20" CornerRadius="36" Background="#C38AAEBC" BorderBrush="#55FFFFFF" BorderThickness="1.2"><Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.35" Color="#1E3744"/></Border.Effect><Grid x:Name="MainGrid" Margin="16"><Grid.RowDefinitions><RowDefinition x:Name="HeaderRow" Height="66"/><RowDefinition x:Name="StatsRow" Height="346"/><RowDefinition x:Name="BoardRow" Height="*"/><RowDefinition x:Name="FooterRow" Height="28"/></Grid.RowDefinitions>
-<Grid x:Name="HeaderPanel" Grid.Row="0"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Border Width="42" Height="42" CornerRadius="10" Background="#F7FFFFFF"><Image x:Name="LogoImage" Margin="5" Stretch="Uniform"/></Border><TextBlock x:Name="BrandText" Text="CodexW" FontSize="32" FontWeight="Black" Foreground="#02080D" Margin="16,0,0,2" VerticalAlignment="Center"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"><Border x:Name="ThemeSwitch" Cursor="Hand" CornerRadius="7" Background="#50485561" Padding="3" Margin="0,0,46,0"><StackPanel Orientation="Horizontal"><Border x:Name="ThemeAutoSegment" Width="24" Height="24" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="ThemeAutoText" Text="◐" FontSize="13" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeLightSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeLightText" Text="☀" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeDarkSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeDarkText" Text="◑" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Border x:Name="LanguageSwitch" Cursor="Hand" CornerRadius="6" Background="#505194AD" Padding="3" Margin="0,0,20,0"><StackPanel Orientation="Horizontal"><Border x:Name="LangZhSegment" Width="38" Height="26" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="LangZhText" Text="中" FontSize="14" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="LangEnSegment" Width="38" Height="26" CornerRadius="5" Background="#00000000"><TextBlock x:Name="LangEnText" Text="EN" FontSize="14" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Button x:Name="CompactButton" Width="58" Height="48" Background="#66D5E5EB" Foreground="#102A38" BorderThickness="0" Margin="0,0,12,0"><TextBlock x:Name="CompactButtonText" Text="简" FontSize="16" FontWeight="Black" TextAlignment="Center" VerticalAlignment="Center"/></Button><Border CornerRadius="20" Background="#D8EAF2F4" Padding="13,8" Margin="0,0,14,0"><TextBlock x:Name="PlanText" Text="PLUS" FontSize="18" FontWeight="Black" Foreground="#51616C"/></Border><Button x:Name="RefreshButton" Content="↻" Width="70" Height="48" FontSize="24" FontWeight="Bold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0"/></StackPanel></Grid>
+<Grid x:Name="HeaderPanel" Grid.Row="0"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Border Width="42" Height="42" CornerRadius="10" Background="#F7FFFFFF"><Image x:Name="LogoImage" Margin="5" Stretch="Uniform"/></Border><TextBlock x:Name="BrandText" Text="CodexW" FontSize="32" FontWeight="Black" Foreground="#02080D" Margin="16,0,0,2" VerticalAlignment="Center"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"><Border x:Name="ThemeSwitch" Cursor="Hand" CornerRadius="7" Background="#50485561" Padding="3" Margin="0,0,46,0"><StackPanel Orientation="Horizontal"><Border x:Name="ThemeAutoSegment" Width="24" Height="24" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="ThemeAutoText" Text="◐" FontSize="13" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeLightSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeLightText" Text="☀" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="ThemeDarkSegment" Width="24" Height="24" CornerRadius="5" Background="#00000000"><TextBlock x:Name="ThemeDarkText" Text="◑" FontSize="13" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Border x:Name="LanguageSwitch" Cursor="Hand" CornerRadius="6" Background="#505194AD" Padding="3" Margin="0,0,20,0"><StackPanel Orientation="Horizontal"><Border x:Name="LangZhSegment" Width="38" Height="26" CornerRadius="5" Background="#168DFF"><TextBlock x:Name="LangZhText" Text="中" FontSize="14" FontWeight="Black" Foreground="#FFFFFF" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border><Border x:Name="LangEnSegment" Width="38" Height="26" CornerRadius="5" Background="#00000000"><TextBlock x:Name="LangEnText" Text="EN" FontSize="14" FontWeight="Black" Foreground="#102A38" TextAlignment="Center" VerticalAlignment="Center" HorizontalAlignment="Center"/></Border></StackPanel></Border><Button x:Name="CompactButton" Width="58" Height="48" Background="#66D5E5EB" Foreground="#102A38" BorderThickness="0" Margin="0,0,12,0"><TextBlock x:Name="CompactButtonText" Text="简" FontSize="16" FontWeight="Black" TextAlignment="Center" VerticalAlignment="Center"/></Button><Border Height="48" MinWidth="72" CornerRadius="24" Background="#D8EAF2F4" Padding="13,0" Margin="0,0,14,0" VerticalAlignment="Center"><TextBlock x:Name="PlanText" Text="PLUS" FontSize="18" FontWeight="Black" Foreground="#51616C" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><Button x:Name="RefreshButton" Content="↻" Width="70" Height="48" FontSize="24" FontWeight="Bold" Background="#66D5E5EB" Foreground="#536A78" BorderThickness="0"/></StackPanel></Grid>
 <Border x:Name="TopStatsPanel" Grid.Row="1" CornerRadius="24" Background="#58D2E9F1" Padding="22" BorderBrush="#35FFFFFF" BorderThickness="1"><Grid x:Name="TopStatsGrid"><Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid x:Name="CompactContentPanel" Grid.Column="0"><Canvas x:Name="RingCanvas" Width="220" Height="220" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0"><Ellipse Width="190" Height="190" Canvas.Left="15" Canvas.Top="15" Stroke="#3A73909A" StrokeThickness="28"/><Ellipse Width="134" Height="134" Canvas.Left="43" Canvas.Top="43" Stroke="#4273909A" StrokeThickness="22"/><Path x:Name="PrimaryArc" Stroke="#2E6BFF" StrokeThickness="28" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><Path x:Name="SecondaryArc" Stroke="#9B6EFF" StrokeThickness="22" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><TextBlock x:Name="PrimaryRingLabel" Text="5h" Canvas.Left="72" Canvas.Top="90" FontSize="15" FontWeight="Black" Foreground="#1487FF"/><TextBlock x:Name="PrimaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="82" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="SecondaryRingLabel" Text="7d" Canvas.Left="72" Canvas.Top="124" FontSize="15" FontWeight="Black" Foreground="#8964FF"/><TextBlock x:Name="SecondaryPercent" Text="--%" Canvas.Left="102" Canvas.Top="116" FontSize="24" FontWeight="Black" Foreground="#03090E"/><TextBlock x:Name="RemainingLabel" Text="剩余" Canvas.Left="64" Canvas.Top="153" Width="92" TextAlignment="Center" FontSize="15" FontWeight="Bold" Foreground="#1E333E"/></Canvas><Grid x:Name="ResetTimesGrid" Margin="16,254,18,0" VerticalAlignment="Top"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="82"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="PrimaryResetLabel" Text="●  5h  重置" Foreground="#2665FF" FontSize="14" FontWeight="Bold"/><TextBlock x:Name="SecondaryResetLabel" Text="●  7d  重置" Foreground="#8D63FF" FontSize="14" FontWeight="Bold" Margin="0,12,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock x:Name="PrimaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right"/><TextBlock x:Name="SecondaryReset" Text="--" FontSize="14" FontWeight="Bold" Foreground="#18313E" HorizontalAlignment="Right" Margin="0,12,0,0"/></StackPanel></Grid><StackPanel x:Name="CompactFloatingControls" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"><Button x:Name="CompactRefreshButton" Content="↻" Width="36" Height="28" Margin="0,8,4,0" Background="#DCEBF3F7" Foreground="#102A38" FontSize="16" FontWeight="Black" BorderThickness="0" Visibility="Collapsed"/><Button x:Name="CompactFloatingButton" Content="全" Width="36" Height="28" Margin="0,8,8,0" Background="#DCEBF3F7" Foreground="#102A38" FontSize="13" FontWeight="Black" BorderThickness="0" Visibility="Collapsed"/></StackPanel></Grid><Grid x:Name="StatsRightPanel" Grid.Column="1" Margin="20,0,0,0"><Grid.RowDefinitions><RowDefinition Height="178"/><RowDefinition Height="124"/></Grid.RowDefinitions><Grid Grid.Row="0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
 <Border Grid.Column="0" Margin="0,0,16,0" CornerRadius="12" Background="#DCEBF3F7" Padding="14"><Grid><TextBlock x:Name="TodayTitle" Text="☀  今日" FontSize="17" FontWeight="Bold" Foreground="#58666F"/><TextBlock x:Name="TodayCost" Text="$--" FontSize="16" FontWeight="Black" Foreground="#4A5962" HorizontalAlignment="Right"/><TextBlock x:Name="TodayTokens" Text="--" FontSize="32" FontWeight="Black" Foreground="#03090E" Margin="0,32,0,0"/><Border Margin="0,70,0,0" Height="12" CornerRadius="6" Background="#C5CDD6D9" VerticalAlignment="Top"><Grid><Border x:Name="TodayBarInput" Background="#0D8BFF" CornerRadius="6" HorizontalAlignment="Left" Width="28"/><Border x:Name="TodayBarCached" Background="#875EFF" CornerRadius="0" HorizontalAlignment="Left" Margin="28,0,0,0" Width="188"/><Border x:Name="TodayBarOut" Background="#FF9F0A" CornerRadius="0,6,6,0" HorizontalAlignment="Right" Width="6"/></Grid></Border><StackPanel x:Name="TodaySplit" Margin="0,84,0,0"/></Grid></Border>
 <Border Grid.Column="1" Margin="0,0,16,0" CornerRadius="12" Background="#DCEBF3F7" Padding="14"><Grid><TextBlock x:Name="SevenTitle" Text="▦  近 7 天" FontSize="17" FontWeight="Bold" Foreground="#58666F"/><TextBlock x:Name="SevenCost" Text="$--" FontSize="16" FontWeight="Black" Foreground="#4A5962" HorizontalAlignment="Right"/><TextBlock x:Name="SevenTokens" Text="--" FontSize="32" FontWeight="Black" Foreground="#03090E" Margin="0,32,0,0"/><Border Margin="0,70,0,0" Height="12" CornerRadius="6" Background="#C5CDD6D9" VerticalAlignment="Top"><Grid><Border x:Name="SevenBarInput" Background="#0D8BFF" CornerRadius="6" HorizontalAlignment="Left" Width="28"/><Border x:Name="SevenBarCached" Background="#875EFF" CornerRadius="0" HorizontalAlignment="Left" Margin="28,0,0,0" Width="188"/><Border x:Name="SevenBarOut" Background="#FF9F0A" CornerRadius="0,6,6,0" HorizontalAlignment="Right" Width="6"/></Grid></Border><StackPanel x:Name="SevenSplit" Margin="0,84,0,0"/></Grid></Border>
@@ -1005,8 +1070,8 @@ function Apply-CompactMode {
             $topGrid.ColumnDefinitions[1].Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
         }
         if ($compactPanel) { $compactPanel.HorizontalAlignment = [Windows.HorizontalAlignment]::Stretch }
-        if ($ringCanvas) { $ringCanvas.Margin = [Windows.Thickness]::new(18, 24, -18, 0) }
-        if ($resetGrid) { $resetGrid.Margin = [Windows.Thickness]::new(34, 254, 0, 0) }
+        if ($ringCanvas) { $ringCanvas.Margin = [Windows.Thickness]::new(0, 24, 0, 0) }
+        if ($resetGrid) { $resetGrid.Margin = [Windows.Thickness]::new(16, 254, 16, 0) }
         Set-ElementVisibility 'HeaderPanel' $true
         Set-ElementVisibility 'StatsRightPanel' $true
         Set-ElementVisibility 'TaskBoardPanel' $true
@@ -1463,7 +1528,7 @@ function Set-QuotaWindowVisuals([bool]$HasPrimary, [bool]$HasWeekly) {
     }
 }
 function Add-TaskCard($Panel,$Item,[string]$Accent,[string]$Chip,[string]$ChipBg){ $border=[Windows.Controls.Border]::new(); $border.Margin=[Windows.Thickness]::new(0,0,0,12); $border.Padding=[Windows.Thickness]::new(12); $border.CornerRadius=[Windows.CornerRadius]::new(10); $border.Background=New-Brush '#DDEBF0F4'; $border.BorderBrush=New-Brush '#70FFFFFF'; $border.BorderThickness=[Windows.Thickness]::new(1); $stack=[Windows.Controls.StackPanel]::new(); $border.Child=$stack; $top=[Windows.Controls.DockPanel]::new(); $code=[Windows.Controls.TextBlock]::new(); $code.Text=$Item.code; $code.FontWeight='Bold'; $code.FontSize=13; $code.Foreground=New-Brush '#65727B'; $time=[Windows.Controls.TextBlock]::new(); $time.Text=Get-RelativeText $Item.updatedAt; $time.FontSize=12; $time.Foreground=New-Brush '#89949A'; $time.HorizontalAlignment='Right'; [Windows.Controls.DockPanel]::SetDock($time,'Right'); $top.Children.Add($time)|Out-Null; $top.Children.Add($code)|Out-Null; $stack.Children.Add($top)|Out-Null; $title=[Windows.Controls.TextBlock]::new(); $title.Text=$Item.title; $title.FontWeight='Black'; $title.FontSize=14; $title.Foreground=New-Brush '#111820'; $title.Margin=[Windows.Thickness]::new(0,8,0,4); $stack.Children.Add($title)|Out-Null; $detail=[Windows.Controls.TextBlock]::new(); $detail.Text=$Item.detail; $detail.FontWeight='SemiBold'; $detail.FontSize=12.5; $detail.Foreground=New-Brush '#626B72'; $detail.Margin=[Windows.Thickness]::new(0,0,0,10); $stack.Children.Add($detail)|Out-Null; $chipBorder=[Windows.Controls.Border]::new(); $chipBorder.Background=New-Brush $ChipBg; $chipBorder.CornerRadius=[Windows.CornerRadius]::new(14); $chipBorder.Padding=[Windows.Thickness]::new(10,4,10,4); $chipBorder.HorizontalAlignment='Left'; $txt=[Windows.Controls.TextBlock]::new(); $txt.Text=$Chip; $txt.FontWeight='Black'; $txt.FontSize=12; $txt.Foreground=New-Brush $Accent; $chipBorder.Child=$txt; $stack.Children.Add($chipBorder)|Out-Null; $Panel.Children.Add($border)|Out-Null }
-function Render-UiSnapshot($s) { if(-not $s){ return }; $p=if($s.primary){[double]$s.primary.remainingPercent}else{0}; $q=if($s.secondary){[double]$s.secondary.remainingPercent}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@($s.recentTasks); if(-not $recent -or $recent.Count -eq 0){$recent=@()}; for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=Get-FooterRefreshText ; Set-AutoRefreshVisual }
+function Render-UiSnapshot($s) { if(-not $s){ return }; $Script:PlanLabel = Resolve-PlanLabel $s.account; Set-Text 'PlanText' (Resolve-PlanLabel $s.account); $p=if($s.primary){Get-QuotaDisplayPercent $s.primary.remainingPercent $s.primary.activityObserved}else{0}; $q=if($s.secondary){Get-QuotaDisplayPercent $s.secondary.remainingPercent $s.secondary.activityObserved}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@($s.recentTasks); if(-not $recent -or $recent.Count -eq 0){$recent=@()}; for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=Get-FooterRefreshText ; Set-AutoRefreshVisual }
 function Update-Ui { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $false }
 function Invoke-ManualRefresh { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $true }
 if ($DumpJson) {
@@ -1495,6 +1560,3 @@ try {
     if (-not (Test-DisposedHwndException $_.Exception)) { throw }
 }
 [void]$Script:App.Run($Script:Window)
-
-
-

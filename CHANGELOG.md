@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## 0.1.6 - 2026-07-16
+
+- Fixed Pro Lite account detection after the desktop app began emitting both
+  account-wide and model-specific rate-limit records.
+- Account-wide Codex quota data now takes priority over model-specific limits,
+  keeping the plan label and weekly remaining percentage in sync.
+- Remaining quota percentages use the same whole-percent presentation as the
+  official app, including activity-aware handling near 100 percent.
+- Centered the plan badge vertically and aligned the full-mode usage ring,
+  reset label, and reset time within the left usage panel.
 ## 0.1.5 - 2026-07-13
 
 - Added ChatGPT-compatible quota windows: CodexW recognizes weekly windows
@@ -49,5 +59,3 @@
   launch-at-login, and graceful quit.
 - Added 5-minute low-cost auto-refresh when Codex is running.
 - Added saved window placement under `%LOCALAPPDATA%\CodexW\settings.json`.
-
-
