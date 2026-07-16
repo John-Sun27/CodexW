@@ -1,5 +1,12 @@
 ﻿# Changelog
 
+## 0.1.7 - 2026-07-16
+
+- Added synchronized auto-refresh status and refresh time to Mini mode.
+- The Mini mode auto-refresh badge now controls the same setting as Full mode.
+- Mini mode keeps the normal footer font size when only the weekly quota is
+  available, and uses compact sizing only when the 5-hour quota is present.
+- Aligned the Mini mode footer with the reset label and reset time above it.
 ## 0.1.6 - 2026-07-16
 
 - Fixed Pro Lite account detection after the desktop app began emitting both
@@ -59,3 +66,4 @@
   launch-at-login, and graceful quit.
 - Added 5-minute low-cost auto-refresh when Codex is running.
 - Added saved window placement under `%LOCALAPPDATA%\CodexW\settings.json`.
+
