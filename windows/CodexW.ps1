@@ -231,6 +231,80 @@ function Resolve-CodexDataHome {
 
 $Script:CodexHome = Resolve-CodexDataHome
 
+function Resolve-CodexExecutable {
+    $userBin = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
+    if (Test-Path -LiteralPath $userBin) {
+        $candidate = Get-ChildItem -LiteralPath $userBin -Recurse -File -Filter 'codex.exe' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+        if ($candidate) { return $candidate }
+    }
+
+    try {
+        $command = Get-Command codex -ErrorAction Stop
+        if ($command.Source) { return $command.Source }
+    } catch {}
+    return $null
+}
+
+function Read-LiveAccountRateLimits {
+    $codex = Resolve-CodexExecutable
+    if (-not $codex) { return $null }
+
+    $process = $null
+    try {
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $codex
+        $startInfo.Arguments = 'app-server --stdio'
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) { return $null }
+
+        $messages = @(
+            @{ method = 'initialize'; id = 1; params = @{ clientInfo = @{ name = 'codexw'; title = 'CodexW'; version = '0.1.8' }; capabilities = @{} } },
+            @{ method = 'initialized'; params = @{} },
+            @{ method = 'account/read'; id = 2; params = @{ refreshToken = $false } },
+            @{ method = 'account/rateLimits/read'; id = 3; params = @{} }
+        )
+        foreach ($message in $messages) {
+            $process.StandardInput.WriteLine(($message | ConvertTo-Json -Depth 8 -Compress))
+        }
+
+        $responses = @{}
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while ($responses.Count -lt 3 -and [DateTime]::UtcNow -lt $deadline) {
+            $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            $readTask = $process.StandardOutput.ReadLineAsync()
+            if (-not $readTask.Wait($remaining)) { break }
+            $line = $readTask.Result
+            if ($null -eq $line) { break }
+            try {
+                $response = $line | ConvertFrom-Json
+                if ($null -ne $response.id) { $responses[[int]$response.id] = $response }
+            } catch {}
+        }
+        if (-not $responses.ContainsKey(3) -or $responses[3].error) { return $null }
+
+        $rate = Get-PropValue $responses[3].result @('rateLimits', 'rate_limits')
+        if (-not $rate) { return $null }
+        $account = if ($responses.ContainsKey(2)) { Get-PropValue $responses[2].result @('account') } else { $null }
+        return [ordered]@{ rate = $rate; account = $account }
+    } catch {
+        return $null
+    } finally {
+        if ($process) {
+            try { if (-not $process.HasExited) { $process.Kill() } } catch {}
+            try { $process.Dispose() } catch {}
+        }
+    }
+}
+
 function Get-SessionFiles {
     $files = @()
     $roots = @(
@@ -355,6 +429,7 @@ function Resolve-PlanLabel {
 
 function Read-LocalSnapshot {
     $messages = New-Object System.Collections.Generic.List[string]
+    $snapshotSource = 'local-session-logs'
     $today = New-TokenBucket
     $seven = New-TokenBucket
     $month = New-TokenBucket
@@ -425,6 +500,14 @@ function Read-LocalSnapshot {
     $latestRateAt = $latestRateResult.at
     $latestRateHasActivity = [bool]$latestRateResult.hasActivity
 
+    $liveRateResult = Read-LiveAccountRateLimits
+    if ($liveRateResult -and $liveRateResult.rate) {
+        $latestRate = $liveRateResult.rate
+        $latestRateAt = Get-Date
+        $latestRateHasActivity = $true
+        $snapshotSource = 'app-server-and-local-session-logs'
+    }
+
     $buckets = @()
     for ($i = 6; $i -ge 0; $i--) {
         $d = $dayStart.AddDays(-$i)
@@ -452,7 +535,7 @@ function Read-LocalSnapshot {
 
     [ordered]@{
         refreshedAt = (Get-Date).ToString('s')
-        source = 'local-session-logs'
+        source = $snapshotSource
         codexHome = $Script:CodexHome
         account = [ordered]@{ type = 'local'; planType = $planType; limitId = $limitId; limitName = $limitName; emailPresent = $false }
         primary = $primary

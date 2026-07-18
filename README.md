@@ -93,7 +93,7 @@ This prints the local data snapshot used by the panel.
 
 ## Privacy
 
-CodexW reads local files under `%USERPROFILE%\.chatgpt` or `%USERPROFILE%\.codex` to display usage data.
+CodexW reads the current plan and quota through the local Codex account interface, then combines it with local session logs under `%USERPROFILE%\.chatgpt` or `%USERPROFILE%\.codex`. If the live interface is unavailable, log-based quota detection remains available as a fallback.
 It does not send this data anywhere.
 
 ## Attribution

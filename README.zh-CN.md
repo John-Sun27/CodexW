@@ -92,7 +92,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\windows\CodexW.ps
 
 ## 隐私
 
-CodexW 只读取 `%USERPROFILE%\.chatgpt` 或 `%USERPROFILE%\.codex` 下的本地文件来展示用量，不会发送这些数据。
+CodexW 通过本机 Codex 账户接口读取当前套餐和额度，并结合 `%USERPROFILE%\.chatgpt` 或 `%USERPROFILE%\.codex` 下的会话日志展示统计；实时接口不可用时会自动回退到日志额度数据。这些数据不会上传。
 
 ## 来源
 

@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## 0.1.8 - 2026-07-19
+
+- Added live plan and quota refresh through the official local Codex account
+  interface used by current ChatGPT/Codex desktop builds.
+- Fixed stale remaining quota after desktop app updates stopped writing new
+  rate-limit records to legacy session logs.
+- Live account-wide limits now override stale log values while local session
+  logs continue to provide token and task statistics.
+- Retained log-based quota detection as a compatibility fallback.
 ## 0.1.7 - 2026-07-16
 
 - Added synchronized auto-refresh status and refresh time to Mini mode.
@@ -66,4 +75,5 @@
   launch-at-login, and graceful quit.
 - Added 5-minute low-cost auto-refresh when Codex is running.
 - Added saved window placement under `%LOCALAPPDATA%\CodexW\settings.json`.
+
 
