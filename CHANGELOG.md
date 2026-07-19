@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## 0.1.9 - 2026-07-19
+
+- Optimized Mini mode refreshes to request only the live Codex account quota,
+  avoiding JSONL session-log scans and their temporary memory cost.
+- Returning from Mini mode to the full dashboard now immediately refreshes
+  token statistics and task-board data.
+- Failed live Mini refreshes keep the previous snapshot instead of replacing
+  the panel with empty data, and manual refresh reports an incomplete result.
+
 ## 0.1.8 - 2026-07-19
 
 - Added live plan and quota refresh through the official local Codex account

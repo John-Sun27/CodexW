@@ -24,7 +24,7 @@ It includes both the full dashboard and a Mini mode focused on the quota ring.
 ## Features
 
 - Desktop panel with Codex usage statistics.
-- Full dashboard mode and compact Mini mode.
+- Full dashboard mode and compact Mini mode. Mini refreshes request only the live account quota, avoiding a session-log scan; returning to the full dashboard triggers a complete statistics refresh.
 - Quota rings adapt to the windows exposed by the current Codex or ChatGPT desktop app. When only a weekly window is available, CodexW shows one weekly ring.
 - Today, 7-day, and lifetime token/cost cards.
 - Value progress bar for Plus, Pro100, and Pro200 thresholds.
@@ -48,8 +48,10 @@ It includes both the full dashboard and a Mini mode focused on the quota ring.
 2. Double-click `CodexWLauncher.exe`. Use `Start-CodexW.cmd` only as a fallback.
 3. Use the tray icon to show, hide, refresh, or quit CodexW.
 
-The app reads local Codex JSONL session logs directly. It does not require a
-background server and does not upload your local usage data.
+The app reads the current plan and remaining quota through the local Codex
+account interface. Full dashboard refreshes also read local Codex JSONL session
+logs for statistics and tasks; Mini mode skips that scan. CodexW does not upload
+your local usage data.
 
 ## Files
 

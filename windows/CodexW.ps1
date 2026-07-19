@@ -1,6 +1,7 @@
 ﻿param(
     [switch]$DumpJson,
-    [string]$SnapshotOut = ''
+    [string]$SnapshotOut = '',
+    [switch]$CompactRefresh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -267,7 +268,7 @@ function Read-LiveAccountRateLimits {
         if (-not $process.Start()) { return $null }
 
         $messages = @(
-            @{ method = 'initialize'; id = 1; params = @{ clientInfo = @{ name = 'codexw'; title = 'CodexW'; version = '0.1.8' }; capabilities = @{} } },
+            @{ method = 'initialize'; id = 1; params = @{ clientInfo = @{ name = 'codexw'; title = 'CodexW'; version = '0.1.9' }; capabilities = @{} } },
             @{ method = 'initialized'; params = @{} },
             @{ method = 'account/read'; id = 2; params = @{ refreshToken = $false } },
             @{ method = 'account/rateLimits/read'; id = 3; params = @{} }
@@ -555,6 +556,59 @@ function Read-LocalSnapshot {
     }
 }
 
+function Read-CompactSnapshot {
+    param($PreviousSnapshot)
+
+    # Compact mode only needs the live quota and plan. Reuse the last full
+    # snapshot for statistics and tasks instead of rescanning JSONL sessions.
+    $liveRateResult = Read-LiveAccountRateLimits
+    if (-not $liveRateResult -or -not $liveRateResult.rate) { return $null }
+
+    $quotaWindows = Resolve-QuotaWindows $liveRateResult.rate
+    $primary = $quotaWindows.primary
+    $secondary = $quotaWindows.secondary
+    if ($primary) { $primary.activityObserved = $true }
+    if ($secondary) { $secondary.activityObserved = $true }
+
+    $local = Get-PropValue $PreviousSnapshot @('local')
+    if (-not $local) {
+        $now = Get-Date
+        $buckets = @()
+        for ($i = 6; $i -ge 0; $i--) {
+            $day = $now.Date.AddDays(-$i)
+            $buckets += [ordered]@{ day = $day.ToString('yyyy-MM-dd'); label = if ($i -eq 0) { '今天' } else { $day.ToString('M/d') }; tokens = [int64]0 }
+        }
+        $local = [ordered]@{
+            today = New-TokenBucket
+            sevenDay = New-TokenBucket
+            month = New-TokenBucket
+            lifetime = New-TokenBucket
+            dailyBuckets = $buckets
+            parsedFileCount = 0
+            tokenEventCount = 0
+        }
+    }
+
+    $planType = Get-PropValue $liveRateResult.rate @('plan_type', 'planType')
+    $limitId = Get-PropValue $liveRateResult.rate @('limit_id', 'limitId')
+    $limitName = Get-PropValue $liveRateResult.rate @('limit_name', 'limitName')
+    $automations = Get-PropValue $PreviousSnapshot @('automations')
+    $recentTasks = Get-PropValue $PreviousSnapshot @('recentTasks')
+    $messages = Get-PropValue $PreviousSnapshot @('messages')
+    [ordered]@{
+        refreshedAt = (Get-Date).ToString('s')
+        source = 'app-server-compact'
+        codexHome = $Script:CodexHome
+        account = [ordered]@{ type = 'local'; planType = $planType; limitId = $limitId; limitName = $limitName; emailPresent = $false }
+        primary = $primary
+        secondary = $secondary
+        local = $local
+        automations = if ($null -eq $automations) { @() } else { @($automations) }
+        recentTasks = if ($null -eq $recentTasks) { @() } else { @($recentTasks) }
+        messages = if ($null -eq $messages) { @() } else { @($messages) }
+    }
+}
+
 function Get-SnapshotCachePath {
     if (-not (Test-Path -LiteralPath $Script:SettingsDir)) {
         New-Item -ItemType Directory -Force -Path $Script:SettingsDir | Out-Null
@@ -647,7 +701,7 @@ function Render-SnapshotCache {
 }
 
 function Start-SnapshotProcess {
-    param([bool]$Manual = $false)
+    param([bool]$Manual = $false, [bool]$CompactRefresh = $false)
     if ($DumpJson) { return }
     if ($Manual) {
         $Script:ManualRefreshPending = $true
@@ -671,9 +725,10 @@ function Start-SnapshotProcess {
 
     $scriptArg = '"' + ($Script:SelfPath -replace '"', '\"') + '"'
     $cacheArg = '"' + ($cachePath -replace '"', '\"') + '"'
+    $compactArg = if ($CompactRefresh) { ' -CompactRefresh' } else { '' }
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $exe
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File $scriptArg -DumpJson -SnapshotOut $cacheArg"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File $scriptArg -DumpJson -SnapshotOut $cacheArg$compactArg"
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
@@ -714,11 +769,15 @@ function Poll-SnapshotProcess {
         return
     }
 
+    $exitCode = $proc.ExitCode
     try { $proc.Dispose() } catch {}
     $Script:SnapshotProcess = $null
     if ($Script:SnapshotPollTimer) { $Script:SnapshotPollTimer.Stop() }
 
-    $rendered = Render-SnapshotCache $true $Script:ManualRefreshPending
+    $rendered = $false
+    if ($exitCode -eq 0) {
+        $rendered = Render-SnapshotCache $true $Script:ManualRefreshPending
+    }
     if (-not $rendered -and $Script:ManualRefreshPending) {
         Set-RefreshFeedback '刷新未完成' 'Refresh incomplete' $false
     }
@@ -1194,6 +1253,7 @@ function Apply-CompactMode {
     Send-WindowToBottom
 }
 function Set-CompactMode([bool]$Enabled) {
+    $wasCompact = $Script:CompactMode
     if ($Script:Window) {
         if ($Script:CompactMode) { $Script:CompactWindowPlacement = Get-CurrentWindowPlacement }
         else { $Script:NormalWindowPlacement = Get-CurrentWindowPlacement }
@@ -1201,6 +1261,7 @@ function Set-CompactMode([bool]$Enabled) {
     $Script:CompactMode = $Enabled
     Apply-CompactMode
     Save-CompactModePreference
+    if (-not $Enabled -and $wasCompact) { Update-Ui }
 }
 function Toggle-CompactMode { Set-CompactMode (-not $Script:CompactMode) }
 function Get-LegacyStartupCommand {
@@ -1634,10 +1695,11 @@ function Set-QuotaWindowVisuals([bool]$HasPrimary, [bool]$HasWeekly) {
 }
 function Add-TaskCard($Panel,$Item,[string]$Accent,[string]$Chip,[string]$ChipBg){ $border=[Windows.Controls.Border]::new(); $border.Margin=[Windows.Thickness]::new(0,0,0,12); $border.Padding=[Windows.Thickness]::new(12); $border.CornerRadius=[Windows.CornerRadius]::new(10); $border.Background=New-Brush '#DDEBF0F4'; $border.BorderBrush=New-Brush '#70FFFFFF'; $border.BorderThickness=[Windows.Thickness]::new(1); $stack=[Windows.Controls.StackPanel]::new(); $border.Child=$stack; $top=[Windows.Controls.DockPanel]::new(); $code=[Windows.Controls.TextBlock]::new(); $code.Text=$Item.code; $code.FontWeight='Bold'; $code.FontSize=13; $code.Foreground=New-Brush '#65727B'; $time=[Windows.Controls.TextBlock]::new(); $time.Text=Get-RelativeText $Item.updatedAt; $time.FontSize=12; $time.Foreground=New-Brush '#89949A'; $time.HorizontalAlignment='Right'; [Windows.Controls.DockPanel]::SetDock($time,'Right'); $top.Children.Add($time)|Out-Null; $top.Children.Add($code)|Out-Null; $stack.Children.Add($top)|Out-Null; $title=[Windows.Controls.TextBlock]::new(); $title.Text=$Item.title; $title.FontWeight='Black'; $title.FontSize=14; $title.Foreground=New-Brush '#111820'; $title.Margin=[Windows.Thickness]::new(0,8,0,4); $stack.Children.Add($title)|Out-Null; $detail=[Windows.Controls.TextBlock]::new(); $detail.Text=$Item.detail; $detail.FontWeight='SemiBold'; $detail.FontSize=12.5; $detail.Foreground=New-Brush '#626B72'; $detail.Margin=[Windows.Thickness]::new(0,0,0,10); $stack.Children.Add($detail)|Out-Null; $chipBorder=[Windows.Controls.Border]::new(); $chipBorder.Background=New-Brush $ChipBg; $chipBorder.CornerRadius=[Windows.CornerRadius]::new(14); $chipBorder.Padding=[Windows.Thickness]::new(10,4,10,4); $chipBorder.HorizontalAlignment='Left'; $txt=[Windows.Controls.TextBlock]::new(); $txt.Text=$Chip; $txt.FontWeight='Black'; $txt.FontSize=12; $txt.Foreground=New-Brush $Accent; $chipBorder.Child=$txt; $stack.Children.Add($chipBorder)|Out-Null; $Panel.Children.Add($border)|Out-Null }
 function Render-UiSnapshot($s) { if(-not $s){ return }; $Script:PlanLabel = Resolve-PlanLabel $s.account; Set-Text 'PlanText' (Resolve-PlanLabel $s.account); $p=if($s.primary){Get-QuotaDisplayPercent $s.primary.remainingPercent $s.primary.activityObserved}else{0}; $q=if($s.secondary){Get-QuotaDisplayPercent $s.secondary.remainingPercent $s.secondary.activityObserved}else{0}; (Find 'PrimaryArc').Data=New-ArcGeometry 110 110 80 -90 (360*$p/100); (Find 'SecondaryArc').Data=New-ArcGeometry 110 110 56 -90 (360*$q/100); (Find 'PrimaryPercent').Text=('{0:N0}%' -f $p); (Find 'SecondaryPercent').Text=('{0:N0}%' -f $q); (Find 'PrimaryReset').Text=Format-ResetTime $s.primary.resetsAt; (Find 'SecondaryReset').Text=Format-ResetTime $s.secondary.resetsAt; (Find 'TodayTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.today); (Find 'TodayCost').Text=Format-Usd $s.local.today.cost; Set-SplitLine 'Today' $s.local.today; (Find 'SevenTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.sevenDay); (Find 'SevenCost').Text=Format-Usd $s.local.sevenDay.cost; Set-SplitLine 'Seven' $s.local.sevenDay; (Find 'LifeTokens').Text=Format-TokenCount (Get-VisibleTokenTotal $s.local.lifetime); (Find 'LifeCost').Text=Format-Usd $s.local.lifetime.cost; Set-SplitLine 'Life' $s.local.lifetime; $valueAmount=[double]$s.local.month.cost; $trackElement=Find 'ValueTrack'; $valueTrack=if($trackElement -and $trackElement.ActualWidth -gt 20){[double]$trackElement.ActualWidth}else{720.0}; $plusLimit=20.0; $pro100Limit=100.0; $pro200Limit=200.0; (Find 'ValueText').Text=Format-Usd $valueAmount; $valueWidth=[Math]::Max(0,[Math]::Min($valueTrack,$valueTrack*$valueAmount/$pro200Limit)); (Find 'ValueBar').Width=$valueWidth; (Find 'ValueMarkerPlus').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$plusLimit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro100').Margin=[Windows.Thickness]::new([Math]::Max(0,($valueTrack*$pro100Limit/$pro200Limit)-4),0,0,0); (Find 'ValueMarkerPro200').Margin=[Windows.Thickness]::new([Math]::Max(0,$valueTrack-4),0,0,0); if($valueAmount -lt $plusLimit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Plus $20' 'Next Plus $20'} elseif($valueAmount -lt $pro100Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro100 $100' 'Next Pro100 $100'} elseif($valueAmount -lt $pro200Limit){(Find 'FullQuotaText').Text=Get-UiText '下一档 Pro200 $200' 'Next Pro200 $200'} else {(Find 'FullQuotaText').Text=Get-UiText '已超过 Pro200 $200' 'Past Pro200 $200'}; $active=Find 'ActiveList'; $pending=Find 'PendingList'; $scheduled=Find 'ScheduledList'; $active.Children.Clear(); $pending.Children.Clear(); $scheduled.Children.Clear(); $recent=@($s.recentTasks); if(-not $recent -or $recent.Count -eq 0){$recent=@()}; for($i=0;$i -lt [Math]::Min(3,$recent.Count);$i++){Add-TaskCard $active $recent[$i] '#FF3B30' ($(if($i -eq 2){'Active'}else{'High'})) '#26FF3B30'}; for($i=3;$i -lt [Math]::Min(5,$recent.Count);$i++){Add-TaskCard $pending $recent[$i] '#FF9F0A' ($(if($i -eq 4){'Idle'}else{'Medium'})) '#26FF9F0A'}; $autos=@($s.automations|Where-Object{$_.status -eq 'ACTIVE'}); if($autos.Count -gt 0){Add-TaskCard $scheduled (Convert-AutomationTaskItem $autos[0]) '#8B6DFF' 'Cron' '#268B6DFF'}; (Find 'BoardMeta').Text=([Math]::Min(6,$recent.Count+$autos.Count)).ToString()+(Get-UiText ' 事项 · ' ' items · ')+(Get-Date).ToString('HH:mm'); (Find 'FooterText').Text=Get-FooterRefreshText; (Find 'CompactFooterText').Text=Get-CompactFooterRefreshText; Set-AutoRefreshVisual }
-function Update-Ui { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $false }
-function Invoke-ManualRefresh { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $true }
+function Update-Ui { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $false $Script:CompactMode }
+function Invoke-ManualRefresh { [void](Render-SnapshotCache $true $false); Start-SnapshotProcess $true $Script:CompactMode }
 if ($DumpJson) {
-    $snapshot = Read-LocalSnapshot
+    $snapshot = if ($CompactRefresh) { Read-CompactSnapshot (Read-SnapshotCache) } else { Read-LocalSnapshot }
+    if (-not $snapshot) { exit 2 }
     if ($SnapshotOut) {
         Save-SnapshotCache $snapshot $SnapshotOut
         exit 0
